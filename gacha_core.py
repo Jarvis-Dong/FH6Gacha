@@ -980,8 +980,13 @@ class GachaCore:
                     break
                 continue
 
-            # 无重复车, 仅轮询 prompt/menu (不再搜重复车)
+            # 无重复车, 轮询 prompt/menu/重复车
             while self.is_running:
+                # 重复车可能在处理完第一辆后才出现, 需要持续检测
+                if self.check_duplicate_car():
+                    self.log(f"[state] 发现新的重复车辆 → 处理")
+                    self.handle_duplicate_vehicle(exit_menu=False)
+                    break  # 回到外层 for 循环继续检测
                 prompt = self.check_gacha_prompt()
                 if prompt == "skip":
                     self.log(f"[state] 检测到 'skip', 下一轮已开始 → Enter 跳过")
