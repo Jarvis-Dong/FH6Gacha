@@ -182,11 +182,13 @@ class GachaCore:
     TEMPLATE_REF_W = 3835
     TEMPLATE_REF_H = 2159
 
-    def __init__(self, log_callback=None):
+    def __init__(self, log_callback=None, stats_callback=None):
         self.log_cb = log_callback or print
+        self.stats_cb = stats_callback
         self.is_running = True
         self.price_threshold = 100_000
         self.dup_match_threshold = 0.80
+        self.dup_stats = {"total": 0, "kept": 0, "sold": 0, "earned": 0}
         self.regions = {}
         self.scale_x = 1.0
         self.scale_y = 1.0
@@ -199,6 +201,13 @@ class GachaCore:
 
     def log(self, msg):
         self.log_cb(msg)
+
+    def _notify_stats(self):
+        if self.stats_cb:
+            try:
+                self.stats_cb(self.dup_stats.copy())
+            except Exception:
+                pass
 
     def _init_regions(self):
         sw, sh = pyautogui.size()
@@ -636,20 +645,26 @@ class GachaCore:
         """处理重复车辆弹窗. exit_menu=True 时处理完加一次 ESC 退出抽奖菜单"""
         self._ensure_focus()  # 确保按键能到达游戏窗口
 
+        self.dup_stats["total"] += 1
         price = self._read_duplicate_price()
         threshold = self.price_threshold
         self.log(f"[duplicate] 识别车辆价值≈{price if price else '?'} | 阈值={threshold}")
 
         if price is not None and price > threshold:
             self.log(f"[duplicate] 价值 > {threshold} → 保留车辆 (回车)")
+            self.dup_stats["kept"] += 1
             hw_press("enter")
         else:
             self.log(f"[duplicate] 价值 ≤ {threshold} → 出售车辆 (下移2+回车)")
+            self.dup_stats["sold"] += 1
+            if price is not None:
+                self.dup_stats["earned"] += price
             hw_press("down", delay=0.12)
             time.sleep(0.1)
             hw_press("down", delay=0.12)
             time.sleep(0.1)
             hw_press("enter")
+        self._notify_stats()
         time.sleep(0.15)
 
         if exit_menu:
@@ -746,12 +761,22 @@ class GachaCore:
     def run_wheelspin(self, rounds=10):
         """普通抽奖 (单抽)"""
         self.log(f"===== 开始普通抽奖 (共 {rounds} 次) =====")
-        return self._gacha_loop(rounds, is_super=False)
+        ok = self._gacha_loop(rounds, is_super=False)
+        self._log_dup_stats()
+        return ok
 
     def run_super_wheelspin(self, rounds=10):
         """超级抽奖 (三连抽)"""
         self.log(f"===== 开始超级抽奖 (共 {rounds} 次) =====")
-        return self._gacha_loop(rounds, is_super=True)
+        ok = self._gacha_loop(rounds, is_super=True)
+        self._log_dup_stats()
+        return ok
+
+    def _log_dup_stats(self):
+        s = self.dup_stats
+        self.log(f"===== 重复车辆统计: 共{s['total']}辆 | "
+                 f"入库{s['kept']}辆 | 出售{s['sold']}辆 | "
+                 f"收入{s['earned']:,} CR =====")
 
     def _gacha_loop(self, max_rounds, is_super):
         # 1. 聚焦游戏窗口

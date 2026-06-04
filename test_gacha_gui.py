@@ -18,7 +18,7 @@ class GachaTestGUI:
         self.root.title("抽奖测试工具")
         self.root.geometry("1050x750")
 
-        self.core = GachaCore(log_callback=self._on_log)
+        self.core = GachaCore(log_callback=self._on_log, stats_callback=self._on_stats)
         self.running = False
         self._preview_job = None  # after id
 
@@ -57,6 +57,26 @@ class GachaTestGUI:
         ttk.Button(bar, text="超级抽奖", command=self._run_super).pack(side=tk.LEFT, padx=3)
         ttk.Button(bar, text="停止", command=self._stop).pack(side=tk.LEFT, padx=3)
 
+        # 统计栏
+        stats_frame = ttk.Frame(self.root)
+        stats_frame.pack(fill=tk.X, padx=5, pady=(0, 2))
+
+        self.stats_total_var = tk.StringVar(value="0")
+        self.stats_kept_var = tk.StringVar(value="0")
+        self.stats_sold_var = tk.StringVar(value="0")
+        self.stats_earned_var = tk.StringVar(value="0 CR")
+
+        for text, var in [
+            ("累计车辆:", self.stats_total_var),
+            ("入库:", self.stats_kept_var),
+            ("出售:", self.stats_sold_var),
+            ("收入:", self.stats_earned_var),
+        ]:
+            f = ttk.Frame(stats_frame)
+            f.pack(side=tk.LEFT, padx=(0, 15))
+            ttk.Label(f, text=text, font=("", 11)).pack(side=tk.LEFT)
+            ttk.Label(f, textvariable=var, font=("", 11, "bold")).pack(side=tk.LEFT)
+
         # 主区: 左侧预览, 右侧日志
         main = ttk.Frame(self.root)
         main.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
@@ -88,6 +108,15 @@ class GachaTestGUI:
         self.log_text.insert(tk.END, f"{time.strftime('%H:%M:%S')} {msg}\n")
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
+
+    def _on_stats(self, stats):
+        self.root.after(0, self._update_stats, stats)
+
+    def _update_stats(self, stats):
+        self.stats_total_var.set(str(stats["total"]))
+        self.stats_kept_var.set(str(stats["kept"]))
+        self.stats_sold_var.set(str(stats["sold"]))
+        self.stats_earned_var.set(f"{stats['earned']:,} CR")
 
     # ==================== ROI 预览 ====================
 
