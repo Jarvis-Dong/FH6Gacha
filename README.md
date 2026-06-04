@@ -59,7 +59,21 @@ python gacha_app.py
 
 ## 打包为 EXE
 
-双击运行 `build.bat` 即可，首次运行会自动释放 `images/` `assets/` `.easyocr_models/` 到 exe 所在目录。
+双击运行 `build.bat` 即可，或手动执行：
+
+```bash
+python -m PyInstaller -n "FH6-Gacha" -F -w gacha_app.py ^
+  --add-data "images;images" ^
+  --add-data "assets;assets" ^
+  --add-data ".easyocr_models;.easyocr_models" ^
+  --collect-all easyocr ^
+  --hidden-import pynput.keyboard._win32 ^
+  --hidden-import pynput.mouse._win32
+```
+
+输出: `dist/FH6-Gacha.exe`
+
+首次运行会自动释放 `images/` `assets/` `.easyocr_models/` 到 exe 所在目录。
 
 ## 项目结构
 
@@ -85,11 +99,11 @@ FH6-AutoGacha/
 
 ## 赞助支持
 
-<img src="微信赞助.png" width="220">
+<img src="assets/微信赞助.png" width="220">
 
 ## 致谢
 
-- [FH6Auto](https://github.com/YOUSTHEONE/FH6Auto) — 最初正是因为 FH6Auto 才开启了本项目，大量代码参考其实现。在 FH6Auto 跑图刷钱的基础上，补齐了自动抽奖的功能
+- [FH6Auto](https://github.com/YOUSTHEONE/FH6Auto) — 最初正是因为 FH6Auto 才开启了本项目。硬件输入、窗口聚焦、模板匹配、打包方式等大量代码参考其实现。在 FH6Auto 跑图刷钱的基础上，本项目补齐了自动抽奖这最后一块拼图，二者配合实现真正的"电表倒转"
 - 图像识别基于 OpenCV 模板匹配
 - OCR 使用 [EasyOCR](https://github.com/JaidedAI/EasyOCR)
 

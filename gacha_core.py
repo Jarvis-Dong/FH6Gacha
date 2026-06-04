@@ -5,6 +5,7 @@ gacha_core.py - 抽奖/超级抽奖核心逻辑模块
 import os
 import sys
 import time
+import shutil
 import threading
 import subprocess
 import cv2
@@ -15,8 +16,52 @@ import ctypes
 import win32gui
 from PIL import Image, ImageGrab
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-IMAGES_DIR = os.path.join(SCRIPT_DIR, "images")
+
+def _get_app_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _get_internal_dir():
+    if hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS
+    return _get_app_dir()
+
+
+APP_DIR = _get_app_dir()
+INTERNAL_DIR = _get_internal_dir()
+
+
+def _auto_extract_dir(folder_name):
+    """从打包内部释放资源文件夹到外部, 已存在文件不覆盖"""
+    internal = os.path.join(INTERNAL_DIR, folder_name)
+    external = os.path.join(APP_DIR, folder_name)
+    if not os.path.isdir(internal):
+        return
+    os.makedirs(external, exist_ok=True)
+    for root, dirs, files in os.walk(internal):
+        rel = os.path.relpath(root, internal)
+        target_root = external if rel == "." else os.path.join(external, rel)
+        os.makedirs(target_root, exist_ok=True)
+        for f in files:
+            src = os.path.join(root, f)
+            dst = os.path.join(target_root, f)
+            if not os.path.exists(dst):
+                try:
+                    shutil.copy2(src, dst)
+                except Exception:
+                    pass
+
+
+_auto_extract_dir("images")
+_auto_extract_dir("assets")
+_auto_extract_dir(".easyocr_models")
+
+IMAGES_DIR = os.path.join(APP_DIR, "images")
+LOGS_DIR = os.path.join(APP_DIR, "logs")
+SETTINGS_FILE = os.path.join(APP_DIR, ".gacha_settings.json")
+SCRIPT_DIR = APP_DIR
 
 # ==============================================
 # 硬件输入结构体 —— 完全复制自 main.py
@@ -182,9 +227,10 @@ class GachaCore:
     TEMPLATE_REF_W = 3835
     TEMPLATE_REF_H = 2159
 
-    def __init__(self, log_callback=None, stats_callback=None):
+    def __init__(self, log_callback=None, preview_callback=None, stats_callback=None):
         self.log_cb = log_callback or print
-        self.stats_cb = stats_callback
+        self.preview_cb = preview_callback  # 实时预览回调 (image, title) -> None
+        self.stats_cb = stats_callback      # 统计数据变更回调 (stats_dict) -> None
         self.is_running = True
         self.price_threshold = 100_000
         self.dup_match_threshold = 0.80
@@ -194,6 +240,10 @@ class GachaCore:
         self.scale_y = 1.0
         self._init_regions()
         self.template_cache = {}
+        # 文件日志
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        self._log_file = open(os.path.join(LOGS_DIR,
+            f"gacha_{time.strftime('%Y%m%d_%H%M%S')}.log"), "w", encoding="utf-8")
         # easyocr 异步预加载
         self._easyocr_reader = None
         self._easyocr_ready = threading.Event()
@@ -201,6 +251,19 @@ class GachaCore:
 
     def log(self, msg):
         self.log_cb(msg)
+        try:
+            self._log_file.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+            self._log_file.flush()
+        except Exception:
+            pass
+
+    def _preview(self, image, title=""):
+        """发送预览画面到 GUI (非阻塞, GUI 端自行调度到主线程)"""
+        if self.preview_cb:
+            try:
+                self.preview_cb(image, title)
+            except Exception:
+                pass
 
     def _notify_stats(self):
         if self.stats_cb:
@@ -274,6 +337,7 @@ class GachaCore:
         """
         full = self.regions.get("全界面")
         curr_w = full[2] if full else pyautogui.size()[0]
+        curr_h = full[3] if full else pyautogui.size()[1]
         scales = []
         def add(s):
             s = round(float(s), 3)
@@ -281,10 +345,10 @@ class GachaCore:
                 scales.append(s)
 
         if ref_w is not None:
-            primary_scale = curr_w / ref_w
+            ref_h = ref_w * self.TEMPLATE_REF_H / self.TEMPLATE_REF_W
+            primary_scale = (curr_w / ref_w + curr_h / ref_h) / 2
         else:
-            # 自动模式: 优先 3835 (gacha 新模板)
-            primary_scale = curr_w / 3835
+            primary_scale = (curr_w / self.TEMPLATE_REF_W + curr_h / self.TEMPLATE_REF_H) / 2
 
         # 基准 + 微调 (对照 main.py: ±2%/±5%/±8%)
         add(primary_scale)
@@ -581,9 +645,9 @@ class GachaCore:
                 best = max_val
         return best
 
-    _DUPLICATE_TEMPLATES = [
-        "duplicate_car_title.png", "duplicate_car.png", "duplicate_car_2.png"
-    ]
+    _DUPLICATE_TEMPLATES = ["duplicate_car.png"]
+
+    _MAX_MATCH_DIM = 800  # 匹配前降采样上限, 大幅减少 matchTemplate 计算量
 
     def _find_in_screen(self, template_name, screen, region, threshold=0.75, ref_w=None):
         """在预捕获的截图中搜索模板 (不重复截图, 供多线程并行搜索使用)"""
@@ -593,6 +657,19 @@ class GachaCore:
         tpl = self._load_template(path)
         if tpl is None:
             return None
+
+        # 对大尺寸截图/模板降采样到工作分辨率, 避免 matchTemplate 万亿级像素运算
+        max_dim = max(screen.shape[1], screen.shape[0], tpl.shape[1], tpl.shape[0])
+        ds = 1.0
+        if max_dim > self._MAX_MATCH_DIM:
+            ds = self._MAX_MATCH_DIM / max_dim
+            screen = cv2.resize(screen,
+                (int(screen.shape[1] * ds), int(screen.shape[0] * ds)),
+                interpolation=cv2.INTER_AREA)
+            tpl = cv2.resize(tpl,
+                (int(tpl.shape[1] * ds), int(tpl.shape[0] * ds)),
+                interpolation=cv2.INTER_AREA)
+
         for scale in self._get_scales(fast=True, ref_w=ref_w):
             h, w = tpl.shape[:2]
             nw, nh = int(w * scale), int(h * scale)
@@ -604,40 +681,44 @@ class GachaCore:
             if max_val >= threshold:
                 rx = region[0] if region else 0
                 ry = region[1] if region else 0
+                # 坐标从降采样空间映射回原始截图空间
+                px = int((max_loc[0] + nw / 2) / ds + rx)
+                py = int((max_loc[1] + nh / 2) / ds + ry)
                 self.log(f"[match] {template_name} score={max_val:.3f} scale={scale:.3f}")
-                return (max_loc[0] + nw // 2 + rx, max_loc[1] + nh // 2 + ry)
+                return (px, py)
         return None
 
     def check_duplicate_car(self):
-        """多线程并行检测重复车辆弹窗 (捕获一次截图, 3模板并行搜索, cv2.matchTemplate 释放 GIL)"""
+        """检测重复车辆弹窗 (捕获截图, 单模板匹配)"""
         t0 = time.time()
         rx, ry, rw, rh = self._scale_roi(1025, 221, 1938, 484)
         dup_region = (
             max(0, rx - rw // 4), max(0, ry - rh // 2),
             int(rw * 1.5), int(rh * 2.5)
         )
+        full = self.regions.get("全界面")
+        if full:
+            fx, fy, fw, fh = full
+            dx, dy, dw, dh = dup_region
+            cx = max(fx, dx)
+            cy = max(fy, dy)
+            cw = min(fx + fw, dx + dw) - cx
+            ch = min(fy + fh, dy + dh) - cy
+            dup_region = (cx, cy, max(1, cw), max(1, ch))
         screen = self.capture_region(dup_region)
+        self._preview(screen, "重复车检测中...")
 
-        found = [False]
-
-        def search_one(name):
-            if found[0]:
-                return
-            if self._find_in_screen(name, screen, dup_region, self.dup_match_threshold):
-                found[0] = True
-
-        threads = []
+        found = False
         for name in self._DUPLICATE_TEMPLATES:
-            t = threading.Thread(target=search_one, args=(name,), daemon=True)
-            threads.append(t)
-            t.start()
-        for t in threads:
-            t.join()
+            if self._find_in_screen(name, screen, dup_region, self.dup_match_threshold):
+                found = True
+                break
 
         dt = (time.time() - t0) * 1000
-        if found[0]:
+        if found:
             self.log(f"[dup] 判态=True 耗时={dt:.0f}ms")
-        return found[0]
+            self._preview(screen, "重复车: 已发现")
+        return found
 
     # ==================== 重复车辆处理 ====================
 
@@ -686,6 +767,7 @@ class GachaCore:
                 return None
 
             price_img = self.capture_region(price_region)
+            self._preview(price_img, "价格识别区域")
             gray = cv2.cvtColor(price_img, cv2.COLOR_BGR2GRAY)
 
             # 裁剪右半部分 (跳过 "出售价格：CR " 前缀)
@@ -760,6 +842,7 @@ class GachaCore:
 
     def run_wheelspin(self, rounds=10):
         """普通抽奖 (单抽)"""
+        self.dup_stats = {"total": 0, "kept": 0, "sold": 0, "earned": 0}
         self.log(f"===== 开始普通抽奖 (共 {rounds} 次) =====")
         ok = self._gacha_loop(rounds, is_super=False)
         self._log_dup_stats()
@@ -767,6 +850,7 @@ class GachaCore:
 
     def run_super_wheelspin(self, rounds=10):
         """超级抽奖 (三连抽)"""
+        self.dup_stats = {"total": 0, "kept": 0, "sold": 0, "earned": 0}
         self.log(f"===== 开始超级抽奖 (共 {rounds} 次) =====")
         ok = self._gacha_loop(rounds, is_super=True)
         self._log_dup_stats()
@@ -838,7 +922,10 @@ class GachaCore:
                             hw_press("esc", delay=0.08)
                             time.sleep(0.5)
                             return True
-                        self.log("未识别页面状态, 继续等待...")
+                        self.log("未识别页面状态, 尝试 Enter 推进...")
+                        self._ensure_focus()
+                        hw_press("enter")
+                        time.sleep(0.15)
                         none_count = 5
                     time.sleep(0.2)
                     continue
@@ -881,9 +968,6 @@ class GachaCore:
             if self.check_duplicate_car():
                 self.log(f"[state] 重复车辆页面 → 处理 (第{i+1}次)")
                 self.handle_duplicate_vehicle(exit_menu=False)
-                time.sleep(0.15)
-            else:
-                # 优先检测 skip/claim (可能下一轮已开始)
                 prompt = self.check_gacha_prompt()
                 if prompt == "skip":
                     self.log(f"[state] 检测到 'skip', 下一轮已开始 → Enter 跳过")
@@ -894,16 +978,28 @@ class GachaCore:
                 if prompt == "claim":
                     self.log(f"[state] 检测到 'claim' 提示, 回到主循环")
                     break
-                # 再检测抽奖菜单
+                continue
+
+            # 无重复车, 仅轮询 prompt/menu (不再搜重复车)
+            while self.is_running:
+                prompt = self.check_gacha_prompt()
+                if prompt == "skip":
+                    self.log(f"[state] 检测到 'skip', 下一轮已开始 → Enter 跳过")
+                    self._ensure_focus()
+                    hw_press("enter")
+                    time.sleep(0.15)
+                    return
+                if prompt == "claim":
+                    self.log(f"[state] 检测到 'claim' 提示, 回到主循环")
+                    return
                 at_menu = (
                     self.find_image("super_wheelspin_btn.png", region="左", threshold=0.65, ref_w=3835)
                     or self.find_image("wheelspin_btn.png", region="右", threshold=0.65, ref_w=3835)
                 )
                 if at_menu:
                     self.log(f"[state] 抽奖菜单页面, 全部重复车已处理")
-                    break
-                self.log(f"[state] 未识别页面, 等待重试...")
-                time.sleep(0.5)
+                    return
+                self.log(f"[state] 未识别页面, 重试")
 
 
 def main():

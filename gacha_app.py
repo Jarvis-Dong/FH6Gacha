@@ -1,32 +1,34 @@
 """
-gacha_app.py - FH6 抽奖助手 正式版 GUI
+gacha_app.py - FH6 抽奖自动化 日常使用GUI
+日志本地持久化 + 设置记忆 + F8紧急停止
 """
+import sys
 import tkinter as tk
 from tkinter import ttk
-from PIL import Image, ImageTk
 import threading
 import time
-import os
-import sys
 import json
+import os
 import shutil
-import logging
-from datetime import datetime
+import webbrowser
+import ctypes
+from PIL import Image, ImageTk
+from pynput import keyboard
 
-from gacha_core import GachaCore
-
-# ==================== 自动解压资源 ====================
-
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _get_internal_dir():
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    if hasattr(sys, "_MEIPASS"):
         return sys._MEIPASS
     return APP_DIR
 
 
 def _auto_extract_dir(folder_name):
+    """从打包内部释放资源文件夹到外部, 已存在文件不覆盖"""
     internal = os.path.join(_get_internal_dir(), folder_name)
     external = os.path.join(APP_DIR, folder_name)
     if not os.path.isdir(internal):
@@ -40,241 +42,191 @@ def _auto_extract_dir(folder_name):
             src = os.path.join(root, f)
             dst = os.path.join(target_root, f)
             if not os.path.exists(dst):
-                shutil.copy2(src, dst)
+                try:
+                    shutil.copy2(src, dst)
+                except Exception:
+                    pass
 
 
 _auto_extract_dir("images")
 _auto_extract_dir("assets")
 _auto_extract_dir(".easyocr_models")
 
-# ==================== 设置持久化 ====================
-
 SETTINGS_FILE = os.path.join(APP_DIR, ".gacha_settings.json")
-
-DEFAULT_SETTINGS = {
-    "normal_rounds": 10,
-    "super_rounds": 5,
-    "price_threshold": 100000,
-    "dup_match_threshold": 0.80,
-}
 
 
 def load_settings():
+    defaults = {"normal_rounds": 3, "super_rounds": 3, "price_threshold": 100000}
     try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for k, v in DEFAULT_SETTINGS.items():
-            if k not in data:
-                data[k] = v
-        return data
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for k in defaults:
+                if k not in data:
+                    data[k] = defaults[k]
+            return data
     except Exception:
-        return dict(DEFAULT_SETTINGS)
+        pass
+    return defaults
 
 
 def save_settings(settings):
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2, ensure_ascii=False)
+            json.dump(settings, f, indent=2)
     except Exception:
         pass
 
 
-# ==================== GUI ====================
-
-FONT = ("Microsoft YaHei", 12)
-FONT_BOLD = ("Microsoft YaHei", 12, "bold")
-FONT_BTN = ("Microsoft YaHei", 14, "bold")
-FONT_BIG = ("Microsoft YaHei", 16, "bold")
-FONT_LOG = ("Consolas", 11)
-
-
-class GachaAppGUI:
+class GachaApp:
     def __init__(self, root):
         self.root = root
         self.root.title("FH6 抽奖助手")
-        self.root.geometry("900x680")
-        self.root.minsize(800, 600)
+        self.root.geometry("960x700")
+        self.root.minsize(800, 500)
 
         self.settings = load_settings()
-        self.core = GachaCore(log_callback=self._on_log, stats_callback=self._on_stats)
         self.running = False
-        self._price_fmt_lock = False
-        self._log_file = None
+        self._gacha_thread = None
+        self.core = None
+        self._support_win = None
 
-        self._setup_log_file()
         self._build_ui()
-        self._apply_settings_to_ui()
-        self._setup_hotkeys()
+        self._apply_dpi()
+        self._setup_hotkey()
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-    # ==================== 日志文件 ====================
-
-    def _setup_log_file(self):
-        os.makedirs(os.path.join(APP_DIR, "logs"), exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(APP_DIR, "logs", f"gacha_{ts}.log")
-        self._log_file = open(path, "w", encoding="utf-8")
-
-    # ==================== 全局热键 ====================
-
-    def _setup_hotkeys(self):
+    # ==================== DPI ====================
+    def _apply_dpi(self):
         try:
-            from pynput.keyboard import GlobalHotKeys
-
-            def on_f8():
-                self.root.after(0, self._start)
-
-            def on_f9():
-                self.root.after(0, self._stop)
-
-            self._hotkey_listener = GlobalHotKeys(
-                {"<F8>": on_f8, "<F9>": on_f9}
-            )
-            self._hotkey_listener.start()
-            self.log("全局热键已注册: F8=开始  F9=停止")
-        except Exception as e:
-            self.log(f"热键注册失败: {e}")
-            self._hotkey_listener = None
-
-    # ==================== UI ====================
-
-    def _build_ui(self):
-        # 顶部状态栏
-        top_bar = ttk.Frame(self.root, padding=5)
-        top_bar.pack(fill=tk.X)
-
-        self.status_var = tk.StringVar(value="就绪")
-        ttk.Label(top_bar, textvariable=self.status_var, font=FONT_BIG).pack(side=tk.LEFT)
-        ttk.Label(top_bar, text="F8 开始  |  F9 停止", font=FONT).pack(side=tk.RIGHT)
-
-        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X)
-
-        # 中部: 三列布局
-        middle = ttk.Frame(self.root)
-        middle.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        middle.columnconfigure(1, weight=1)
-        middle.columnconfigure(2, weight=1)
-
-        # 左列: 按钮
-        left_col = ttk.Frame(middle, padding=5)
-        left_col.grid(row=0, column=0, sticky=tk.N, padx=(0, 10))
-
-        self.start_btn = ttk.Button(left_col, text="▶  开始 (F8)", command=self._start)
-        self.start_btn.pack(fill=tk.X, pady=3, ipady=8)
-
-        self.stop_btn = ttk.Button(left_col, text="■  停止 (F9)", command=self._stop)
-        self.stop_btn.pack(fill=tk.X, pady=3, ipady=8)
-
-        ttk.Separator(left_col, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
-
-        self.support_btn = ttk.Button(
-            left_col, text="❤  支持 / 检查更新", command=self._open_support
-        )
-        self.support_btn.pack(fill=tk.X, pady=3, ipady=8)
-
-        # 中列: 设置
-        mid_col = ttk.Frame(middle, padding=10)
-        mid_col.grid(row=0, column=1, sticky=tk.NSEW, padx=5)
-
-        ttk.Label(mid_col, text="抽奖设置", font=FONT_BOLD).pack(anchor=tk.W, pady=(0, 8))
-
-        for label, var_name, default in [
-            ("普通抽奖次数", "normal_rounds", 10),
-            ("超级抽奖次数", "super_rounds", 5),
-        ]:
-            f = ttk.Frame(mid_col)
-            f.pack(fill=tk.X, pady=3)
-            ttk.Label(f, text=label, font=FONT, width=14).pack(side=tk.LEFT)
-            var = tk.StringVar(value=str(default))
-            setattr(self, f"{var_name}_var", var)
-            ttk.Entry(f, textvariable=var, font=FONT, width=8).pack(side=tk.LEFT)
-
-        ttk.Separator(mid_col, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
-
-        f = ttk.Frame(mid_col)
-        f.pack(fill=tk.X, pady=3)
-        ttk.Label(f, text="价格阈值", font=FONT, width=14).pack(side=tk.LEFT)
-        self.price_var = tk.StringVar(value="100,000")
-        self.price_var.trace_add("write", self._fmt_price)
-        ttk.Entry(f, textvariable=self.price_var, font=FONT, width=12).pack(side=tk.LEFT)
-
-        f = ttk.Frame(mid_col)
-        f.pack(fill=tk.X, pady=3)
-        ttk.Label(f, text="重复车检测阈值", font=FONT, width=14).pack(side=tk.LEFT)
-        self.dup_threshold_var = tk.StringVar(value="0.80")
-        ttk.Entry(f, textvariable=self.dup_threshold_var, font=FONT, width=6).pack(side=tk.LEFT)
-
-        # 右列: 统计
-        right_col = ttk.Frame(middle, padding=10)
-        right_col.grid(row=0, column=2, sticky=tk.N, padx=5)
-
-        ttk.Label(right_col, text="本次统计", font=FONT_BOLD).pack(anchor=tk.W, pady=(0, 8))
-
-        stats_items = [
-            ("累计车辆:", "total", "0"),
-            ("入库:", "kept", "0"),
-            ("出售:", "sold", "0"),
-            ("收入:", "earned", "0 CR"),
-        ]
-        self._stats_vars = {}
-        for label, key, default in stats_items:
-            f = ttk.Frame(right_col)
-            f.pack(fill=tk.X, pady=4)
-            ttk.Label(f, text=label, font=FONT, width=9).pack(side=tk.LEFT)
-            var = tk.StringVar(value=default)
-            self._stats_vars[key] = var
-            ttk.Label(f, textvariable=var, font=FONT_BOLD).pack(side=tk.LEFT)
-
-        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10)
-
-        # 底部: 日志
-        log_frame = ttk.Frame(self.root, padding=5)
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
-
-        self.log_text = tk.Text(
-            log_frame,
-            state=tk.DISABLED,
-            font=FONT_LOG,
-            bg="white",
-            fg="#222",
-            wrap=tk.WORD,
-        )
-        scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
-        self.log_text.config(yscrollcommand=scroll.set)
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-    # ==================== 价格格式化 ====================
-
-    def _fmt_price(self, *_):
-        if self._price_fmt_lock:
-            return
-        self._price_fmt_lock = True
-        try:
-            raw = self.price_var.get().replace(",", "").strip()
-            if raw == "" or raw == "-":
-                self._price_fmt_lock = False
-                return
-            if raw.isdigit():
-                formatted = f"{int(raw):,}"
-                self.price_var.set(formatted)
-        finally:
-            self._price_fmt_lock = False
-
-    # ==================== 日志 ====================
-
-    def log(self, msg):
-        ts = datetime.now().strftime("%H:%M:%S")
-        line = f"{ts} {msg}"
-        if self._log_file:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
             try:
-                self._log_file.write(line + "\n")
-                self._log_file.flush()
+                ctypes.windll.user32.SetProcessDPIAware()
             except Exception:
                 pass
 
-    def _on_log(self, msg):
-        self.log(msg)
+    # ==================== F8/F9 热键 ====================
+    def _setup_hotkey(self):
+        def on_press(k):
+            if k == keyboard.Key.f8:
+                self.root.after(0, self._on_f8)
+            elif k == keyboard.Key.f9:
+                self.root.after(0, self._on_f9)
+
+        self._keyboard_listener = keyboard.Listener(on_press=on_press)
+        self._keyboard_listener.start()
+
+    def _on_f8(self):
+        if not self.running:
+            self._start()
+
+    def _on_f9(self):
+        if self.running:
+            self._stop()
+
+    # ==================== UI ====================
+    def _build_ui(self):
+        style = ttk.Style()
+        style.configure("Large.TButton", font=("Microsoft YaHei UI", 20))
+        style.configure("Large.TLabelframe.Label", font=("Microsoft YaHei UI", 20, "bold"))
+
+        # ── 顶部状态栏 ──
+        status_bar = ttk.Frame(self.root, padding=(8, 8, 8, 2))
+        status_bar.pack(fill=tk.X)
+
+        self.status_var = tk.StringVar(value="就绪")
+        ttk.Label(status_bar, textvariable=self.status_var, font=("Microsoft YaHei UI", 22, "bold"),
+                  foreground="#2196F3").pack(side=tk.LEFT)
+
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=8)
+
+        # ── 主控区：左(按钮) | 中(设置) | 右(统计) ──
+        main_area = ttk.Frame(self.root, padding=8)
+        main_area.pack(fill=tk.X)
+
+        # 左列：按钮
+        left_col = ttk.Frame(main_area)
+        left_col.pack(side=tk.LEFT, padx=(0, 12))
+
+        self.start_btn = ttk.Button(left_col, text="▶ 开始 (F8)", command=self._start, style="Large.TButton", width=14)
+        self.start_btn.pack(pady=3)
+        self.stop_btn = ttk.Button(left_col, text="■ 停止 (F9)", command=self._stop, state=tk.DISABLED, style="Large.TButton", width=14)
+        self.stop_btn.pack(pady=3)
+        self.update_btn = ttk.Button(left_col, text="❤ 支持 / 更新", command=self._open_support, style="Large.TButton", width=14)
+        self.update_btn.pack(pady=3)
+
+        # 垂直分隔
+        ttk.Separator(main_area, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+
+        # 中列：设置
+        mid_col = ttk.Frame(main_area)
+        mid_col.pack(side=tk.LEFT, expand=True, padx=8)
+
+        row1 = ttk.Frame(mid_col)
+        row1.pack(fill=tk.X, pady=3)
+        ttk.Label(row1, text="普通抽奖次数", font=("Microsoft YaHei UI", 20), width=12).pack(side=tk.LEFT)
+        self.normal_var = tk.StringVar(value=str(self.settings["normal_rounds"]))
+        ttk.Entry(row1, textvariable=self.normal_var, width=8, font=("Microsoft YaHei UI", 20)).pack(side=tk.LEFT, padx=(8, 0))
+
+        row2 = ttk.Frame(mid_col)
+        row2.pack(fill=tk.X, pady=3)
+        ttk.Label(row2, text="超级抽奖次数", font=("Microsoft YaHei UI", 20), width=12).pack(side=tk.LEFT)
+        self.super_var = tk.StringVar(value=str(self.settings["super_rounds"]))
+        ttk.Entry(row2, textvariable=self.super_var, width=8, font=("Microsoft YaHei UI", 20)).pack(side=tk.LEFT, padx=(8, 0))
+
+        row3 = ttk.Frame(mid_col)
+        row3.pack(fill=tk.X, pady=3)
+        ttk.Label(row3, text="价格阈值", font=("Microsoft YaHei UI", 20), width=12).pack(side=tk.LEFT)
+        self.price_var = tk.StringVar(value=f"{self.settings['price_threshold']:,}")
+        self._price_fmt_lock = False
+
+        def fmt_price(*args):
+            if self._price_fmt_lock:
+                return
+            raw = self.price_var.get().replace(",", "")
+            if raw.isdigit():
+                self._price_fmt_lock = True
+                self.price_var.set(f"{int(raw):,}")
+                self._price_fmt_lock = False
+        self.price_var.trace_add("write", fmt_price)
+        ttk.Entry(row3, textvariable=self.price_var, width=12, font=("Microsoft YaHei UI", 20)).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=8, pady=(4, 0))
+
+        # ── 统计面板（横向）──
+        stats_frame = ttk.LabelFrame(self.root, text="本次统计", padding=8, style="Large.TLabelframe")
+        stats_frame.pack(fill=tk.X, padx=8, pady=(4, 0))
+
+        self.stats_labels = {}
+        cols = [("total", "累计车辆"), ("kept", "入库"), ("sold", "出售"), ("earned", "收入")]
+        for key, label in cols:
+            row = ttk.Frame(stats_frame)
+            row.pack(side=tk.LEFT, expand=True, padx=10)
+            ttk.Label(row, text=label, font=("Microsoft YaHei UI", 18)).pack()
+            val = ttk.Label(row, text="0" if key != "earned" else "0 CR",
+                            font=("Microsoft YaHei UI", 20, "bold"), foreground="#4CAF50")
+            val.pack()
+            self.stats_labels[key] = val
+
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=8, pady=(4, 0))
+
+        # ── 日志区域 ──
+        log_frame = ttk.LabelFrame(self.root, text="日志", padding=6, style="Large.TLabelframe")
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 8))
+
+        self.log_text = tk.Text(log_frame, state=tk.DISABLED, font=("Consolas", 20),
+                                bg="white", fg="black", insertbackground="black",
+                                wrap=tk.WORD)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL,
+                                  command=self.log_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+
+    # ==================== 日志 ====================
+    def _log(self, msg):
         self.root.after(0, self._append_log, msg)
 
     def _append_log(self, msg):
@@ -284,165 +236,172 @@ class GachaAppGUI:
         self.log_text.config(state=tk.DISABLED)
 
     # ==================== 统计回调 ====================
-
     def _on_stats(self, stats):
-        self.root.after(0, self._update_stats, stats)
+        self.root.after(0, self._update_stats, stats.copy())
 
     def _update_stats(self, stats):
-        self._stats_vars["total"].set(str(stats["total"]))
-        self._stats_vars["kept"].set(str(stats["kept"]))
-        self._stats_vars["sold"].set(str(stats["sold"]))
-        self._stats_vars["earned"].set(f"{stats['earned']:,} CR")
+        if "total" in self.stats_labels:
+            self.stats_labels["total"].config(text=str(stats["total"]))
+        if "kept" in self.stats_labels:
+            self.stats_labels["kept"].config(text=str(stats["kept"]))
+        if "sold" in self.stats_labels:
+            self.stats_labels["sold"].config(text=str(stats["sold"]))
+        if "earned" in self.stats_labels:
+            self.stats_labels["earned"].config(text=f"{stats['earned']:,} CR")
 
-    # ==================== 设置 ====================
-
-    def _apply_settings_to_ui(self):
-        s = self.settings
-        self.normal_rounds_var.set(str(s.get("normal_rounds", 10)))
-        self.super_rounds_var.set(str(s.get("super_rounds", 5)))
-        self.price_var.set(f"{int(s.get('price_threshold', 100000)):,}")
-        self.dup_threshold_var.set(str(s.get("dup_match_threshold", 0.80)))
-
-    def _read_ui_settings(self):
+    # ==================== 启动 / 停止 ====================
+    def _parse_int(self, var, default):
         try:
-            normal = int(self.normal_rounds_var.get())
+            return max(0, int(var.get().strip().replace(",", "")))
         except ValueError:
-            normal = 10
-        try:
-            super_r = int(self.super_rounds_var.get())
-        except ValueError:
-            super_r = 5
-        try:
-            price_str = self.price_var.get().replace(",", "").strip()
-            price = int(price_str)
-        except ValueError:
-            price = 100000
-        try:
-            dup_th = float(self.dup_threshold_var.get())
-        except ValueError:
-            dup_th = 0.80
-
-        self.core.price_threshold = price
-        self.core.dup_match_threshold = dup_th
-
-        s = {
-            "normal_rounds": normal,
-            "super_rounds": super_r,
-            "price_threshold": price,
-            "dup_match_threshold": dup_th,
-        }
-        self.settings = s
-        save_settings(s)
-        return normal, super_r
-
-    # ==================== 运行控制 ====================
+            return default
 
     def _start(self):
         if self.running:
-            self._on_log("已有任务在运行")
             return
 
-        normal_rounds, super_rounds = self._read_ui_settings()
+        normal_rounds = self._parse_int(self.normal_var, 0)
+        super_rounds = self._parse_int(self.super_var, 0)
+        price_threshold = self._parse_int(self.price_var, 100000)
+
+        if normal_rounds <= 0 and super_rounds <= 0:
+            self._log("[!] 请至少设置一种抽奖次数 > 0")
+            return
+
+        # 保存设置
+        self.settings["normal_rounds"] = normal_rounds
+        self.settings["super_rounds"] = super_rounds
+        self.settings["price_threshold"] = price_threshold
+        save_settings(self.settings)
 
         self.running = True
-        self.core.is_running = True
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
         self.status_var.set("运行中...")
-        self._on_log(f"===== 启动抽奖 (普通:{normal_rounds}次 | 超级:{super_rounds}次) =====")
 
-        def _run():
-            try:
-                if normal_rounds > 0:
-                    self.core.run_wheelspin(normal_rounds)
-                if super_rounds > 0 and self.core.is_running:
-                    self.core.run_super_wheelspin(super_rounds)
-                self._on_log("===== 全部抽奖完成 =====")
-            except Exception as e:
-                self._on_log(f"运行异常: {e}")
-            finally:
-                self.running = False
-                self.root.after(0, lambda: self.status_var.set("就绪"))
+        # 重置统计
+        for key in self.stats_labels:
+            self.stats_labels[key].config(text="0" if key != "earned" else "0 CR")
 
-        threading.Thread(target=_run, daemon=True).start()
+        from gacha_core import GachaCore
+        self.core = GachaCore(
+            log_callback=self._log,
+            stats_callback=self._on_stats,
+        )
+        self.core.price_threshold = price_threshold
+
+        self._gacha_thread = threading.Thread(target=self._run_gacha,
+                                              args=(normal_rounds, super_rounds),
+                                              daemon=True)
+        self._gacha_thread.start()
+
+    def _run_gacha(self, normal_rounds, super_rounds):
+        try:
+            if normal_rounds > 0:
+                self.core.run_wheelspin(normal_rounds)
+            if super_rounds > 0 and self.core.is_running:
+                self.core.run_super_wheelspin(super_rounds)
+        except Exception as e:
+            self._log(f"运行异常: {e}")
+        finally:
+            self.running = False
+            self.root.after(0, self._on_done)
 
     def _stop(self):
-        self.core.is_running = False
+        if self.core:
+            self.core.is_running = False
         self.running = False
+        self._log("⏹ 紧急停止 (F9)")
         self.status_var.set("已停止")
-        self._on_log("⏹ 用户停止")
 
-    # ==================== 支持弹窗 ====================
+    def _on_done(self):
+        self.running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.status_var.set("就绪")
+        self._log("===== 全部任务完成 =====")
 
+    # ==================== 支持 & 检查更新 ====================
     def _open_support(self):
-        win = tk.Toplevel(self.root)
-        win.title("支持 / 检查更新")
-        win.geometry("420x480")
-        win.resizable(False, False)
-        win.transient(self.root)
-        win.grab_set()
+        if self._support_win is not None and self._support_win.winfo_exists():
+            self._support_win.focus()
+            return
 
-        f = ttk.Frame(win, padding=15)
-        f.pack(fill=tk.BOTH, expand=True)
+        self._support_win = tk.Toplevel(self.root)
+        self._support_win.title("支持 & 检查更新")
+        self._support_win.geometry("420x600")
+        self._support_win.resizable(False, False)
+        self._support_win.configure(bg="#f5f5f5")
 
-        ttk.Label(f, text="FH6 抽奖助手", font=("Microsoft YaHei", 16, "bold")).pack()
+        # 居中于主窗口
+        self._support_win.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 420) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 600) // 2
+        self._support_win.geometry(f"+{x}+{y}")
 
-        # QR 码
+        # 标题
+        tk.Label(self._support_win, text="感谢您的支持！", font=("Microsoft YaHei UI", 18, "bold"),
+                 fg="#F97316", bg="#f5f5f5").pack(pady=(20, 6))
+        tk.Label(self._support_win, text="您的支持是持续优化的动力",
+                 font=("Microsoft YaHei UI", 12), fg="#666", bg="#f5f5f5").pack(pady=4)
+
+        # 二维码
         qr_path = os.path.join(APP_DIR, "assets", "qrcode.png")
-        if os.path.exists(qr_path):
-            try:
+        try:
+            if os.path.exists(qr_path):
                 img = Image.open(qr_path)
-                img = img.resize((200, 200), Image.LANCZOS)
+                img = img.resize((220, 220), Image.LANCZOS)
                 tk_img = ImageTk.PhotoImage(img)
-                lbl = ttk.Label(f, image=tk_img)
-                lbl.image = tk_img
-                lbl.pack(pady=8)
-            except Exception:
-                ttk.Label(f, text="(二维码加载失败)").pack(pady=8)
+                qr_label = tk.Label(self._support_win, image=tk_img, bg="#f5f5f5")
+                qr_label.image = tk_img
+                qr_label.pack(pady=10)
+            else:
+                tk.Label(self._support_win, text="（未找到赞助二维码）",
+                         fg="gray", bg="#f5f5f5").pack(pady=40)
+        except Exception as e:
+            tk.Label(self._support_win, text=f"（二维码加载失败: {e}）",
+                     fg="gray", bg="#f5f5f5").pack(pady=40)
 
-        ttk.Label(f, text="扫码赞助支持开发者", font=FONT).pack()
+        # 分隔线
+        ttk.Separator(self._support_win, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=30, pady=12)
 
-        ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        # 版本信息
+        tk.Label(self._support_win, text="FH6 抽奖助手",
+                 font=("Microsoft YaHei UI", 13, "bold"), fg="#333", bg="#f5f5f5").pack()
+        tk.Label(self._support_win, text="GitHub: SaYa-t/FH6-AUTOGacha",
+                 font=("Consolas", 10), fg="#888", bg="#f5f5f5").pack(pady=(2, 10))
 
-        ttk.Label(f, text="检查更新:", font=FONT_BOLD).pack(anchor=tk.W)
-        ttk.Label(
-            f,
-            text="https://github.com/SaYa-t/FH6-AUTOGacha/releases",
-            font=("Consolas", 10),
-            foreground="#0366d6",
-            cursor="hand2",
-        ).pack(anchor=tk.W, pady=2)
+        # 按钮区
+        btn_frame = tk.Frame(self._support_win, bg="#f5f5f5")
+        btn_frame.pack(pady=6)
 
-        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=10)
+        tk.Button(btn_frame, text="检查更新",
+                  font=("Microsoft YaHei UI", 13), width=12, height=1,
+                  bg="#444", fg="white", cursor="hand2",
+                  command=lambda: webbrowser.open(
+                      "https://github.com/SaYa-t/FH6-AUTOGacha/releases")
+                  ).pack(side=tk.LEFT, padx=6)
 
-    # ==================== 关闭 ====================
+        tk.Button(btn_frame, text="GitHub 主页",
+                  font=("Microsoft YaHei UI", 13), width=12, height=1,
+                  bg="#2EA043", fg="white", cursor="hand2",
+                  command=lambda: webbrowser.open(
+                      "https://github.com/SaYa-t/FH6-AUTOGacha")
+                  ).pack(side=tk.LEFT, padx=6)
 
     def _on_closing(self):
-        self.core.is_running = False
-        self.running = False
-        if self._hotkey_listener:
-            try:
-                self._hotkey_listener.stop()
-            except Exception:
-                pass
-        if self._log_file:
-            try:
-                self._log_file.close()
-            except Exception:
-                pass
+        if self.core:
+            self.core.is_running = False
+        try:
+            self._keyboard_listener.stop()
+        except Exception:
+            pass
         self.root.destroy()
 
 
 def main():
-    import ctypes
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
-
     root = tk.Tk()
-    GachaAppGUI(root)
+    GachaApp(root)
     root.mainloop()
 
 
