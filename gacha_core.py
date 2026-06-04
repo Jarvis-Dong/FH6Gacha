@@ -961,50 +961,38 @@ class GachaCore:
         return True
 
     def _handle_all_duplicates(self):
-        """状态机: 循环处理所有重复车辆弹窗, 直到回到抽奖菜单页"""
-        for i in range(5):
+        """轮询处理所有重复车辆弹窗, 直到回到抽奖主循环或菜单"""
+        for _ in range(60):
             if not self.is_running:
                 return
+
+            # 1. 检测重复车
             if self.check_duplicate_car():
-                self.log(f"[state] 重复车辆页面 → 处理 (第{i+1}次)")
                 self.handle_duplicate_vehicle(exit_menu=False)
-                prompt = self.check_gacha_prompt()
-                if prompt == "skip":
-                    self.log(f"[state] 检测到 'skip', 下一轮已开始 → Enter 跳过")
-                    self._ensure_focus()
-                    hw_press("enter")
-                    time.sleep(0.15)
-                    break
-                if prompt == "claim":
-                    self.log(f"[state] 检测到 'claim' 提示, 回到主循环")
-                    break
                 continue
 
-            # 无重复车, 轮询 prompt/menu/重复车
-            while self.is_running:
-                # 重复车可能在处理完第一辆后才出现, 需要持续检测
-                if self.check_duplicate_car():
-                    self.log(f"[state] 发现新的重复车辆 → 处理")
-                    self.handle_duplicate_vehicle(exit_menu=False)
-                    break  # 回到外层 for 循环继续检测
-                prompt = self.check_gacha_prompt()
-                if prompt == "skip":
-                    self.log(f"[state] 检测到 'skip', 下一轮已开始 → Enter 跳过")
-                    self._ensure_focus()
-                    hw_press("enter")
-                    time.sleep(0.15)
-                    return
-                if prompt == "claim":
-                    self.log(f"[state] 检测到 'claim' 提示, 回到主循环")
-                    return
-                at_menu = (
-                    self.find_image("super_wheelspin_btn.png", region="左", threshold=0.65, ref_w=3835)
-                    or self.find_image("wheelspin_btn.png", region="右", threshold=0.65, ref_w=3835)
-                )
-                if at_menu:
-                    self.log(f"[state] 抽奖菜单页面, 全部重复车已处理")
-                    return
-                self.log(f"[state] 未识别页面, 重试")
+            # 2. 检测 prompt
+            prompt = self.check_gacha_prompt()
+            if prompt == "skip":
+                self.log("[state] 检测到 'skip', 下一轮已开始 → Enter 跳过")
+                self._ensure_focus()
+                hw_press("enter")
+                time.sleep(0.15)
+                return
+            if prompt == "claim":
+                self.log("[state] 检测到 'claim' 提示, 回到主循环")
+                return
+
+            # 3. 检测是否回到菜单
+            at_menu = (
+                self.find_image("super_wheelspin_btn.png", region="左", threshold=0.65, ref_w=3835)
+                or self.find_image("wheelspin_btn.png", region="右", threshold=0.65, ref_w=3835)
+            )
+            if at_menu:
+                self.log("[state] 抽奖菜单页面, 全部重复车已处理")
+                return
+
+            time.sleep(0.2)
 
 
 def main():
