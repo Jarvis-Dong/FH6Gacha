@@ -1,0 +1,7 @@
+opencv-python>=4.5.0
+numpy>=1.20.0
+pyautogui>=0.9.50
+pydirectinput>=1.0.4
+pywin32>=300
+Pillow>=9.0.0
+easyocr>=1.6.0

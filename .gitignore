@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.easyocr_models/
+*.egg-info/
+dist/
+build/
