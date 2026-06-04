@@ -992,7 +992,7 @@ class GachaCore:
                 self.log("[state] 抽奖菜单页面, 全部重复车已处理")
                 return
 
-            time.sleep(0.2)
+            time.sleep(0.05)
 
 
 def main():
