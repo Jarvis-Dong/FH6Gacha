@@ -244,10 +244,11 @@ class GachaCore:
         os.makedirs(LOGS_DIR, exist_ok=True)
         self._log_file = open(os.path.join(LOGS_DIR,
             f"gacha_{time.strftime('%Y%m%d_%H%M%S')}.log"), "w", encoding="utf-8")
-        # easyocr 异步预加载
+        # easyocr 异步预加载 (后台线程, 不阻塞 GUI)
         self._easyocr_reader = None
         self._easyocr_ready = threading.Event()
         self._game_hwnd = None  # 游戏窗口句柄, focus_game 后缓存
+        self._preload_ocr()  # 程序启动即开始预加载, 不等 focus_game
 
     def log(self, msg):
         self.log_cb(msg)
@@ -911,8 +912,13 @@ class GachaCore:
 
                 if state == "none":
                     none_count += 1
-                    if none_count >= 10:
-                        self.log("连续10次未检测到提示, 判定当前页面...")
+                    # 每10次尝试重新定位窗口 (处理抽奖过程中移动窗口的情况)
+                    if none_count % 10 == 0:
+                        self.log(f"[focus] 连续{none_count}次none, 尝试重新聚焦窗口...")
+                        if self._refind_window():
+                            self.log("[focus] 窗口位置已更新")
+                    if none_count >= 30:
+                        self.log("连续30次未检测到提示, 判定当前页面...")
                         at_menu = (
                             self.find_image("super_wheelspin_btn.png", region="左", threshold=0.65, ref_w=3835)
                             or self.find_image("wheelspin_btn.png", region="右", threshold=0.65, ref_w=3835)
