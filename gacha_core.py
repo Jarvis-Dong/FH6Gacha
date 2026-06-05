@@ -484,7 +484,6 @@ class GachaCore:
             gw, gh = client_rect[2], client_rect[3]
             self._update_regions_by_window(gx, gy, gw, gh)
             self.log(f"游戏窗口已聚焦, 区域: ({gx},{gy}) {gw}x{gh}")
-            self._preload_ocr()  # 后台预加载 OCR 模型
             time.sleep(0.5)
             return True
 
@@ -809,7 +808,7 @@ class GachaCore:
                 self.log("[price] 后台预加载 easyocr 模型...")
                 import easyocr
                 reader = easyocr.Reader(
-                    ["en"], gpu=False,
+                    ["en"], gpu=False, download_enabled=False,
                     model_storage_directory=os.path.join(SCRIPT_DIR, ".easyocr_models")
                 )
                 if not self.is_running:
