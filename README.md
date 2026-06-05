@@ -97,10 +97,6 @@ FH6-AutoGacha/
 └── .gacha_settings.json  # 用户设置（自动生成）
 ```
 
-## 赞助支持
-
-<img src="assets/微信赞助.png" width="220">
-
 ## 致谢
 
 - [FH6Auto](https://github.com/YOUSTHEONE/FH6Auto) — 最初正是因为 FH6Auto 才开启了本项目。硬件输入、窗口聚焦、模板匹配、打包方式等大量代码参考其实现。在 FH6Auto 跑图刷钱的基础上，本项目补齐了自动抽奖这最后一块拼图，二者配合实现真正的"电表倒转"
