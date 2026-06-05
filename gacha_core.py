@@ -484,6 +484,7 @@ class GachaCore:
             gw, gh = client_rect[2], client_rect[3]
             self._update_regions_by_window(gx, gy, gw, gh)
             self.log(f"游戏窗口已聚焦, 区域: ({gx},{gy}) {gw}x{gh}")
+            self._preload_ocr()  # 冗余调用, guard 防重复线程
             time.sleep(0.5)
             return True
 
