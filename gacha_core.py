@@ -668,6 +668,7 @@ class GachaCore:
                     gpu=False,
                     download_enabled=True,
                     model_storage_directory=os.path.join(SCRIPT_DIR, ".easyocr_models"),
+                    verbose=False,
                 )
                 if not self.is_running:
                     return

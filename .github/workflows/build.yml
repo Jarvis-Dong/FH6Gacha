@@ -28,7 +28,7 @@ jobs:
         run: >-
           python -c "import easyocr;
           easyocr.Reader(['en'],gpu=False,download_enabled=True,
-          model_storage_directory=r'.easyocr_models')"
+          model_storage_directory=r'.easyocr_models',verbose=False)"
 
       - name: Build FH6Gacha.exe
         shell: pwsh

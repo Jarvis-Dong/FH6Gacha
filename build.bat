@@ -34,7 +34,7 @@ if errorlevel 1 (
 )
 
 echo [2/7] Preparing EasyOCR models...
-"%PYTHON_EXE%" -c "import easyocr; easyocr.Reader(['en'],gpu=False,download_enabled=True,model_storage_directory=r'.easyocr_models')"
+"%PYTHON_EXE%" -c "import easyocr; easyocr.Reader(['en'],gpu=False,download_enabled=True,model_storage_directory=r'.easyocr_models',verbose=False)"
 if errorlevel 1 echo [WARN] OCR model download failed; runtime download fallback remains enabled
 set OCR_DATA=
 if exist ".easyocr_models" set OCR_DATA=--add-data ".easyocr_models;.easyocr_models"
