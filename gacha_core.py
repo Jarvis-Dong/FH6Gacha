@@ -63,6 +63,8 @@ SCRIPT_DIR = APP_DIR
 class GachaCore:
     TEMPLATE_REF_W = 3835
     TEMPLATE_REF_H = 2159
+    MIN_CLIENT_W = 1600
+    MIN_CLIENT_H = 900
 
     def __init__(
         self,
@@ -315,21 +317,33 @@ class GachaCore:
         self.log("正在连接游戏窗口 (ForzaHorizon6.exe)...")
         if not self.window.attach():
             return False
-        self._sync_window_bounds()
+        if not self._sync_window_bounds():
+            self.window.close()
+            return False
         return True
+
+    @classmethod
+    def _window_size_supported(cls, width, height):
+        return width >= cls.MIN_CLIENT_W and height >= cls.MIN_CLIENT_H
 
     def _sync_window_bounds(self):
         gx, gy, gw, gh = self.window.bounds
+        if not self._window_size_supported(gw, gh):
+            self.log(
+                f"游戏客户区 {gw}x{gh} 低于最低支持的 "
+                f"{self.MIN_CLIENT_W}x{self.MIN_CLIENT_H}，停止"
+            )
+            return False
         full = self.regions.get("全界面")
         if full != (gx, gy, gw, gh):
             self._update_regions_by_window(gx, gy, gw, gh)
+        return True
 
     def _ensure_focus(self):
         if not self.window.ensure_attached():
             self.log("游戏窗口连接已丢失")
             return False
-        self._sync_window_bounds()
-        return True
+        return self._sync_window_bounds()
 
     def _refind_window(self):
         self.window.close()

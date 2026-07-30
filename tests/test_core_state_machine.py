@@ -70,6 +70,18 @@ class CoreStateMachineTests(unittest.TestCase):
         def _notify_stats(self):
             pass
 
+    def test_1600x900_is_the_supported_client_size_floor(self):
+        self.assertTrue(GachaCore._window_size_supported(1600, 900))
+        self.assertTrue(GachaCore._window_size_supported(1920, 1080))
+        self.assertFalse(GachaCore._window_size_supported(1599, 900))
+        self.assertFalse(GachaCore._window_size_supported(1600, 899))
+
+        core = object.__new__(GachaCore)
+        core.log = lambda _message: None
+        core.regions = {}
+        core._update_regions_by_window(10, 20, 1600, 900)
+        self.assertEqual(core._scale_roi(0, 0, 3835, 2159), (10, 20, 1600, 900))
+
     @patch("gacha_core.time.sleep", return_value=None)
     def test_claims_normal_spin_and_returns_to_menu(self, _sleep):
         core = self.FakeCore(["skip", "claim"])
