@@ -50,7 +50,8 @@ jobs:
         shell: pwsh
         run: |
           $process = Start-Process -FilePath ".\dist\FH6Gacha.exe" -ArgumentList "--smoke-test" -PassThru
-          if (-not $process.WaitForExit(15000)) {
+          # One-file EasyOCR/Torch extraction can take tens of seconds on a cold runner.
+          if (-not $process.WaitForExit(120000)) {
             Stop-Process -Id $process.Id -Force
             throw "FH6Gacha.exe smoke test timed out"
           }
