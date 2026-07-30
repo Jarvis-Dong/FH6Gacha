@@ -36,8 +36,9 @@ single-file `FH6Gacha.exe`, and smoke-tests the packaged GUI.
 - `gacha_policy.py`: pure duplicate decision logic.
 
 Templates use a 3835x2159 reference except `collectionjournal.png`, which uses
-the original 2560-wide FH6Auto reference. The supported FH6 client-area floor
-is 1600x900; smaller windows must fail before input. EasyOCR models are loaded from
+the original 2560-wide FH6Auto reference. The primary validation target is
+1600x900 or larger; smaller windows remain best-effort and must not be blocked.
+EasyOCR models are loaded from
 `.easyocr_models/`; the first price read waits for initialization, threshold
 mode keeps on failure, sell-all still sells, and keep-all skips OCR. Duplicate
 actions use synchronous background messages and commit stats only after the
