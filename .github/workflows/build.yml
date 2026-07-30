@@ -1,0 +1,64 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Prepare EasyOCR models
+        run: >-
+          python -c "import easyocr;
+          easyocr.Reader(['en'],gpu=False,download_enabled=True,
+          model_storage_directory=r'.easyocr_models')"
+
+      - name: Build FH6Gacha.exe
+        shell: pwsh
+        run: |
+          python -m PyInstaller -n "FH6Gacha" -F -w --noupx gacha_app.py `
+            --add-data "images;images" `
+            --add-data "assets;assets" `
+            --add-data ".easyocr_models;.easyocr_models" `
+            --collect-all easyocr `
+            --hidden-import gacha_backend `
+            --hidden-import gacha_bridge `
+            --hidden-import gacha_core `
+            --hidden-import gacha_policy `
+            --hidden-import pynput.keyboard._win32 `
+            --hidden-import pynput.mouse._win32 `
+            --noconfirm
+
+      - name: Smoke-test packaged executable
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ".\dist\FH6Gacha.exe" -ArgumentList "--smoke-test" -PassThru
+          if (-not $process.WaitForExit(15000)) {
+            Stop-Process -Id $process.Id -Force
+            throw "FH6Gacha.exe smoke test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "FH6Gacha.exe exited with code $($process.ExitCode)"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FH6Gacha-windows
+          path: dist/FH6Gacha.exe

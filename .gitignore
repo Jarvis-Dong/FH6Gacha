@@ -1,7 +1,11 @@
 __pycache__/
+.DS_Store
 *.pyc
 .easyocr_models/
 *.egg-info/
 dist/
 build/
 /timage/
+logs/
+.gacha_settings.json
+*.tmp
