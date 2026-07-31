@@ -126,7 +126,7 @@ build.bat
 
 日常可运行 `start.bat`，它按顺序寻找根目录 EXE、`dist` 产物或本地虚拟环境。
 
-仓库还提供 `.github/workflows/build.yml`。在 GitHub Actions 手动运行 `Build Windows EXE`，或推送 `v*` tag，可下载 `FH6Gacha-windows` 构建产物。
+普通用户可直接从 [GitHub Releases](https://github.com/Jarvis-Dong/FH6Gacha/releases) 下载 `FH6Gacha.exe`，公开仓库无需登录。维护者也可在 GitHub Actions 手动运行 `Build Windows EXE` 获取临时构建产物；推送 `v*` tag 时，只有测试、OCR 模型加载和 EXE 冒烟检查全部成功，Workflow 才会自动创建或更新对应 Release。
 
 ## 自动化检查
 

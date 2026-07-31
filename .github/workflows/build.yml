@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -64,3 +67,24 @@ jobs:
         with:
           name: FH6Gacha-windows
           path: dist/FH6Gacha.exe
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+          if ($releaseExists) {
+            gh release upload $tag "dist/FH6Gacha.exe#FH6Gacha.exe" `
+              --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            gh release create $tag "dist/FH6Gacha.exe#FH6Gacha.exe" `
+              --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes `
+              --title "FH6Gacha $tag"
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release publication failed"
+          }
