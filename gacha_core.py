@@ -51,7 +51,6 @@ def _auto_extract_dir(folder_name):
 
 
 _auto_extract_dir("images")
-_auto_extract_dir("assets")
 _auto_extract_dir(".easyocr_models")
 
 IMAGES_DIR = os.path.join(APP_DIR, "images")
@@ -675,6 +674,7 @@ class GachaCore:
                     ["en"],
                     gpu=False,
                     download_enabled=True,
+                    detector=False,
                     model_storage_directory=os.path.join(SCRIPT_DIR, ".easyocr_models"),
                     verbose=False,
                 )
@@ -697,7 +697,7 @@ class GachaCore:
             self.log("[price] easyocr 尚未就绪, 跳过")
             return None
         try:
-            results = self._easyocr_reader.readtext(
+            results = self._easyocr_reader.recognize(
                 binary_img, detail=0, allowlist="0123456789,"
             )
             if results:

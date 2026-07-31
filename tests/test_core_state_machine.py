@@ -155,6 +155,24 @@ class CoreStateMachineTests(unittest.TestCase):
         core._easyocr_ready.set()
         self.assertTrue(core._ensure_ocr_ready())
 
+    def test_price_ocr_recognizes_the_pre_cropped_number_without_detection(self):
+        class RecognitionOnlyReader:
+            def recognize(self, image, **options):
+                self.image = image
+                self.options = options
+                return [" 55,000 "]
+
+        core = self.FakeCore([])
+        core._easyocr_ready = Event()
+        core._easyocr_ready.set()
+        core._easyocr_reader = RecognitionOnlyReader()
+        image = object()
+
+        self.assertEqual(core._ocr_digits_easyocr(image), "55,000")
+        self.assertIs(core._easyocr_reader.image, image)
+        self.assertEqual(core._easyocr_reader.options["detail"], 0)
+        self.assertEqual(core._easyocr_reader.options["allowlist"], "0123456789,")
+
 
 if __name__ == "__main__":
     unittest.main()

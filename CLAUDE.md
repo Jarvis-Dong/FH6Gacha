@@ -44,6 +44,9 @@ EasyOCR models are loaded from
 mode keeps on failure, sell-all still sells, and keep-all skips OCR. Duplicate
 actions use synchronous background messages and commit stats only after the
 popup is confirmed dismissed.
+The price ROI is already cropped, so EasyOCR must stay recognition-only with
+`detector=False`; builds include only `english_g2.pth` and the English character
+table. Do not restore donation assets or package an `assets/` directory.
 
 F8 starts when idle and emergency-stops when running. F9 stops standalone mode;
 bridge mode reserves it for FH6Auto pause/resume handshakes. Statistics are

@@ -57,7 +57,7 @@ def _extract_resources(folder_name):
             shutil.copy2(path, destination)
 
 
-for _folder in ("images", "assets", ".easyocr_models"):
+for _folder in ("images", ".easyocr_models"):
     _extract_resources(_folder)
 
 
@@ -82,6 +82,22 @@ def save_settings(settings):
         json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     os.replace(temp, SETTINGS_FILE)
+
+
+def _smoke_test_embedded_ocr():
+    model_dir = Path(APP_DIR) / ".easyocr_models"
+    if not (model_dir / "english_g2.pth").is_file():
+        return
+    import easyocr
+
+    easyocr.Reader(
+        ["en"],
+        gpu=False,
+        download_enabled=False,
+        detector=False,
+        model_storage_directory=str(model_dir),
+        verbose=False,
+    )
 
 
 class GachaApp:
@@ -856,6 +872,8 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         pass
+    if "--smoke-test" in sys.argv:
+        _smoke_test_embedded_ocr()
     root = tk.Tk()
     app = GachaApp(root)
     if "--smoke-test" in sys.argv:

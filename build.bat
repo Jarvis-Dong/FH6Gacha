@@ -34,10 +34,10 @@ if errorlevel 1 (
 )
 
 echo [2/7] Preparing EasyOCR models...
-"%PYTHON_EXE%" -c "import easyocr; easyocr.Reader(['en'],gpu=False,download_enabled=True,model_storage_directory=r'.easyocr_models',verbose=False)"
+"%PYTHON_EXE%" -c "import easyocr; easyocr.Reader(['en'],gpu=False,download_enabled=True,detector=False,model_storage_directory=r'.easyocr_models',verbose=False)"
 if errorlevel 1 echo [WARN] OCR model download failed; runtime download fallback remains enabled
 set OCR_DATA=
-if exist ".easyocr_models" set OCR_DATA=--add-data ".easyocr_models;.easyocr_models"
+if exist ".easyocr_models\english_g2.pth" set OCR_DATA=--add-data ".easyocr_models\english_g2.pth;.easyocr_models"
 
 echo [3/7] Running tests...
 set PYTHONDONTWRITEBYTECODE=1
@@ -65,9 +65,8 @@ echo [6/7] Building...
     --noupx ^
     "%MAIN_FILE%" ^
     --add-data "images;images" ^
-    --add-data "assets;assets" ^
     %OCR_DATA% ^
-    --collect-all easyocr ^
+    --additional-hooks-dir "pyinstaller_hooks" ^
     --hidden-import gacha_backend ^
     --hidden-import gacha_bridge ^
     --hidden-import gacha_core ^

@@ -28,6 +28,7 @@ jobs:
         run: >-
           python -c "import easyocr;
           easyocr.Reader(['en'],gpu=False,download_enabled=True,
+          detector=False,
           model_storage_directory=r'.easyocr_models',verbose=False)"
 
       - name: Build FH6Gacha.exe
@@ -35,9 +36,8 @@ jobs:
         run: |
           python -m PyInstaller -n "FH6Gacha" -F -w --noupx gacha_app.py `
             --add-data "images;images" `
-            --add-data "assets;assets" `
-            --add-data ".easyocr_models;.easyocr_models" `
-            --collect-all easyocr `
+            --add-data ".easyocr_models/english_g2.pth;.easyocr_models" `
+            --additional-hooks-dir "pyinstaller_hooks" `
             --hidden-import gacha_backend `
             --hidden-import gacha_bridge `
             --hidden-import gacha_core `
