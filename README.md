@@ -7,10 +7,11 @@ Forza Horizon 6 Steam 版后台抽奖工具。它既可以单独运行普通/超
 ## 功能
 
 - 普通抽奖、超级抽奖，可分别指定次数或抽到耗尽。
+- FH6Auto 风格深色界面，可随时切换中文 / English，并记住语言选择。
 - 重复车三种策略：按价格判断、全部出售、全部保留。
 - EasyOCR 识别重复车价格；按价格模式下 OCR 失败会保留车辆，绝不隐式误卖。
 - 重复车关键按键使用同步后台消息，并在弹窗确认消失后才累计保留、出售和收入。
-- 累计普通/超级次数、重复车、保留、出售、收入、OCR 失败和联动轮次。
+- 累计普通/超级次数、重复车、保留、出售、重复车出售收入 CR、OCR 失败和联动轮次。
 - `PrintWindow` 后台截图与 `PostMessage` 后台键鼠，不移动物理鼠标、不抢游戏前台。
 - 阶段绝对超时、连续未知画面推进上限、F8 紧急停止、主菜单归位验证。
 - 可选 FH6Auto 联动；官方 EXE 不拆包、不重打包、不写进程内存、不注入 DLL，也不注入游戏进程。
@@ -96,6 +97,8 @@ FH6Auto 跑图 -> 买车 -> 点技能 -> 卖车
 
 EasyOCR 模型保存在 EXE 同目录的 `.easyocr_models/`。如果构建包没有内置模型，第一次需要价格的重复车会在安全时限内等待模型联网下载和初始化；下载失败会记录日志。按价格策略会保留车辆，“全部出售”仍会出售但该车收入无法计入统计。
 
+“重复车出售收入 CR”只累计成功识别价格并确认出售的重复车辆。抽奖奖励直接获得的 CR 目前没有可靠的后台识别来源，因此不会计入该项统计。
+
 ## 快捷键
 
 - 空闲时 `F8`：开始当前模式。
@@ -129,7 +132,7 @@ build.bat
 
 ```bat
 python -m unittest discover -s tests -v
-python -m py_compile gacha_app.py gacha_backend.py gacha_bridge.py gacha_core.py gacha_policy.py
+python -m py_compile gacha_app.py gacha_backend.py gacha_bridge.py gacha_core.py gacha_i18n.py gacha_policy.py
 ```
 
 测试覆盖：重复车安全策略与动作确认、FH6Auto 日志协议、旧日志不重放、新日志跟随、配置临时修改/恢复、中间轮暂停/恢复/失败停止，以及最终轮报告握手。
@@ -158,6 +161,7 @@ python -m py_compile gacha_app.py gacha_backend.py gacha_bridge.py gacha_core.py
 ```text
 gacha_app.py       GUI、独立模式和联动模式入口
 gacha_core.py      普通/超级抽奖状态机、重复车与 OCR
+gacha_i18n.py      中文 / English 界面文案
 gacha_backend.py   Steam FH6 窗口发现、PrintWindow、PostMessage
 gacha_bridge.py    FH6Auto 日志、配置保护、暂停/恢复握手
 gacha_policy.py    可测试的重复车安全决策

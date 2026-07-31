@@ -5,7 +5,7 @@
 ```bash
 python gacha_app.py
 python -m unittest discover -s tests -v
-python -m py_compile gacha_app.py gacha_backend.py gacha_bridge.py gacha_core.py gacha_policy.py
+python -m py_compile gacha_app.py gacha_backend.py gacha_bridge.py gacha_core.py gacha_i18n.py gacha_policy.py
 build.bat
 ```
 
@@ -32,6 +32,7 @@ single-file `FH6Gacha.exe`, and smoke-tests the packaged GUI.
 - `gacha_backend.py`: Steam process/window discovery, background capture/input,
   bridge hotkeys.
 - `gacha_core.py`: normal/super state machine, OCR, duplicate handling, stats.
+- `gacha_i18n.py`: Chinese/English GUI strings and duplicate-policy labels.
 - `gacha_bridge.py`: diagnostic follower, temporary config guard, handshakes.
 - `gacha_policy.py`: pure duplicate decision logic.
 
@@ -47,3 +48,5 @@ popup is confirmed dismissed.
 F8 starts when idle and emergency-stops when running. F9 stops standalone mode;
 bridge mode reserves it for FH6Auto pause/resume handshakes. Statistics are
 cumulative across normal and super spins in one run and across bridge cycles.
+The `earned` statistic means confirmed duplicate-car sale income only; wheelspin
+prize CR is not counted because there is no reliable detection source.

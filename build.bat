@@ -71,6 +71,7 @@ echo [6/7] Building...
     --hidden-import gacha_backend ^
     --hidden-import gacha_bridge ^
     --hidden-import gacha_core ^
+    --hidden-import gacha_i18n ^
     --hidden-import gacha_policy ^
     --hidden-import pynput.keyboard._win32 ^
     --hidden-import pynput.mouse._win32 ^

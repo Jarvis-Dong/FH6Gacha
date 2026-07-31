@@ -18,6 +18,7 @@ from pynput import keyboard
 from gacha_backend import process_running
 from gacha_bridge import BridgeController, FH6AutoConfigGuard, validate_fh6auto_pipeline
 from gacha_core import GachaCore
+from gacha_i18n import LANGUAGE_NAMES, POLICY_LABELS, tr
 
 APP_DIR = (
     os.path.dirname(sys.executable)
@@ -27,14 +28,8 @@ APP_DIR = (
 INTERNAL_DIR = getattr(sys, "_MEIPASS", APP_DIR)
 SETTINGS_FILE = os.path.join(APP_DIR, ".gacha_settings.json")
 
-POLICY_LABELS = {
-    "threshold": "按价格判断（OCR失败时保留）",
-    "sell_all": "重复车辆全部出售",
-    "keep_all": "重复车辆全部保留",
-}
-LABEL_POLICIES = {label: value for value, label in POLICY_LABELS.items()}
-
 DEFAULTS = {
+    "language": "zh",
     "mode": "standalone",
     "normal_rounds": 3,
     "super_rounds": 3,
@@ -74,7 +69,9 @@ def load_settings():
             settings.update(payload)
     except (OSError, json.JSONDecodeError):
         pass
-    if settings.get("duplicate_policy") not in POLICY_LABELS:
+    if settings.get("language") not in LANGUAGE_NAMES:
+        settings["language"] = "zh"
+    if settings.get("duplicate_policy") not in POLICY_LABELS["zh"]:
         settings["duplicate_policy"] = "threshold"
     return settings
 
@@ -90,10 +87,11 @@ def save_settings(settings):
 class GachaApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("FH6 抽奖助手 · 独立 / 联动")
-        self.root.geometry("1120x760")
-        self.root.minsize(960, 680)
         self.settings = load_settings()
+        self.language = self.settings["language"]
+        self.root.title(self._t("window_title"))
+        self.root.geometry("1180x820")
+        self.root.minsize(1020, 720)
         self.recovered_config = self._recover_pending_config()
         self.running = False
         self.core = None
@@ -102,11 +100,21 @@ class GachaApp:
         self.worker = None
         self._keyboard_listener = None
         self.closing = threading.Event()
+        self._localized_widgets = []
+        self.status_key = "status_ready"
         self._build_ui()
         if self.recovered_config:
-            self._append_log("已恢复上次异常退出遗留的 FH6Auto 配置")
+            self._append_log(self._t("config_recovered"))
         self._setup_hotkeys()
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _t(self, key, **values):
+        return tr(self.language, key, **values)
+
+    def _localize(self, widget, key):
+        self._localized_widgets.append((widget, key))
+        widget.configure(text=self._t(key))
+        return widget
 
     def _recover_pending_config(self):
         directory = self.settings.get("fh6auto_dir") or ""
@@ -120,42 +128,185 @@ class GachaApp:
             return False
 
     def _build_ui(self):
+        colors = {
+            "bg": "#0F141B",
+            "panel": "#18202B",
+            "card": "#171D26",
+            "input": "#131923",
+            "border": "#2A3442",
+            "text": "#F0F6FC",
+            "muted": "#8B949E",
+            "blue": "#1F6AA5",
+            "green": "#2EA043",
+            "red": "#DA3633",
+            "gold": "#F1C40F",
+        }
+        self.colors = colors
+        self.root.configure(bg=colors["bg"])
+
         style = ttk.Style()
-        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 20, "bold"))
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
         style.configure(
-            "Value.TLabel",
-            font=("Microsoft YaHei UI", 15, "bold"),
-            foreground="#087E8B",
+            ".",
+            background=colors["bg"],
+            foreground=colors["text"],
+            font=("Microsoft YaHei UI", 11),
+        )
+        style.configure("TFrame", background=colors["bg"])
+        style.configure("TLabel", background=colors["bg"], foreground=colors["text"])
+        style.configure(
+            "Card.TLabelframe",
+            background=colors["panel"],
+            bordercolor=colors["border"],
+            relief="solid",
+        )
+        style.configure(
+            "Card.TLabelframe.Label",
+            background=colors["panel"],
+            foreground=colors["gold"],
+            font=("Microsoft YaHei UI", 12, "bold"),
+        )
+        style.configure("Panel.TFrame", background=colors["panel"])
+        style.configure(
+            "Panel.TLabel", background=colors["panel"], foreground=colors["text"]
+        )
+        style.configure(
+            "Hint.TLabel", background=colors["panel"], foreground=colors["muted"]
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground=colors["input"],
+            foreground=colors["text"],
+            insertcolor=colors["text"],
+            bordercolor=colors["border"],
+            lightcolor=colors["border"],
+            darkcolor=colors["border"],
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=colors["input"],
+            background=colors["panel"],
+            foreground=colors["text"],
+            arrowcolor=colors["text"],
+            bordercolor=colors["border"],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", colors["input"])],
+            foreground=[("readonly", colors["text"])],
+        )
+        style.configure(
+            "TRadiobutton",
+            background=colors["panel"],
+            foreground=colors["text"],
+            indicatorcolor=colors["input"],
+        )
+        style.map(
+            "TRadiobutton",
+            background=[("active", colors["panel"])],
+            indicatorcolor=[("selected", colors["blue"])],
+        )
+        style.configure(
+            "TCheckbutton",
+            background=colors["panel"],
+            foreground=colors["muted"],
+            indicatorcolor=colors["input"],
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", colors["panel"])],
+            foreground=[("active", colors["text"])],
+            indicatorcolor=[("selected", colors["green"])],
         )
 
-        header = ttk.Frame(self.root, padding=(14, 10))
+        header = tk.Frame(self.root, bg=colors["bg"], padx=20, pady=14)
         header.pack(fill=tk.X)
-        self.status_var = tk.StringVar(value="就绪")
-        ttk.Label(header, textvariable=self.status_var, style="Title.TLabel").pack(
-            side=tk.LEFT
+        brand = tk.Frame(header, bg=colors["bg"])
+        brand.pack(side=tk.LEFT)
+        tk.Label(
+            brand,
+            text="FH6GACHA",
+            bg=colors["bg"],
+            fg="#5DADE2",
+            font=("Segoe UI", 24, "bold"),
+        ).pack(anchor="w")
+        self.brand_subtitle = self._localize(
+            tk.Label(
+                brand,
+                bg=colors["bg"],
+                fg=colors["muted"],
+                font=("Segoe UI", 9, "bold"),
+            ),
+            "brand_subtitle",
         )
-        ttk.Label(header, text="Steam 后台模式", foreground="#4F6D7A").pack(
-            side=tk.RIGHT
-        )
+        self.brand_subtitle.pack(anchor="w")
 
-        controls = ttk.LabelFrame(self.root, text="运行设置", padding=12)
-        controls.pack(fill=tk.X, padx=12, pady=(0, 8))
+        header_right = tk.Frame(header, bg=colors["bg"])
+        header_right.pack(side=tk.RIGHT)
+        self.language_label = self._localize(
+            tk.Label(
+                header_right,
+                bg=colors["bg"],
+                fg=colors["muted"],
+                font=("Microsoft YaHei UI", 10),
+            ),
+            "language",
+        )
+        self.language_label.pack(side=tk.LEFT, padx=(0, 6))
+        self.language_display_var = tk.StringVar(value=LANGUAGE_NAMES[self.language])
+        self.language_box = ttk.Combobox(
+            header_right,
+            textvariable=self.language_display_var,
+            values=list(LANGUAGE_NAMES.values()),
+            state="readonly",
+            width=9,
+        )
+        self.language_box.pack(side=tk.LEFT, padx=(0, 14))
+        self.language_box.bind("<<ComboboxSelected>>", self._on_language_changed)
+        self.status_var = tk.StringVar(value=self._t("status_ready"))
+        self.status_label = tk.Label(
+            header_right,
+            textvariable=self.status_var,
+            bg="#222B36",
+            fg="#C9D1D9",
+            padx=16,
+            pady=7,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        self.status_label.pack(side=tk.LEFT)
+
+        controls = self._localize(
+            ttk.LabelFrame(self.root, padding=14, style="Card.TLabelframe"),
+            "run_settings",
+        )
+        controls.pack(fill=tk.X, padx=18, pady=(0, 10))
+        for column in range(6):
+            controls.columnconfigure(column, weight=1 if column in (1, 4) else 0)
 
         self.mode_var = tk.StringVar(value=self.settings["mode"])
-        ttk.Radiobutton(
-            controls,
-            text="独立抽奖",
-            variable=self.mode_var,
-            value="standalone",
-            command=self._update_mode_ui,
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(
-            controls,
-            text="跟随 FH6Auto 自动循环",
-            variable=self.mode_var,
-            value="bridge",
-            command=self._update_mode_ui,
-        ).grid(row=0, column=1, columnspan=2, sticky="w")
+        self.standalone_radio = self._localize(
+            ttk.Radiobutton(
+                controls,
+                variable=self.mode_var,
+                value="standalone",
+                command=self._update_mode_ui,
+            ),
+            "standalone_mode",
+        )
+        self.standalone_radio.grid(row=0, column=0, columnspan=2, sticky="w")
+        self.bridge_radio = self._localize(
+            ttk.Radiobutton(
+                controls,
+                variable=self.mode_var,
+                value="bridge",
+                command=self._update_mode_ui,
+            ),
+            "bridge_mode",
+        )
+        self.bridge_radio.grid(row=0, column=2, columnspan=4, sticky="w", padx=(18, 0))
 
         self.normal_var = tk.StringVar(value=str(self.settings["normal_rounds"]))
         self.super_var = tk.StringVar(value=str(self.settings["super_rounds"]))
@@ -167,125 +318,310 @@ class GachaApp:
         )
         self.price_var = tk.StringVar(value=str(self.settings["price_threshold"]))
         self.timeout_var = tk.StringVar(value=str(self.settings["phase_timeout"]))
-        self.policy_var = tk.StringVar(
-            value=POLICY_LABELS[self.settings["duplicate_policy"]]
-        )
+        self.policy_key = self.settings["duplicate_policy"]
+        self.policy_var = tk.StringVar()
 
-        ttk.Label(controls, text="普通抽奖").grid(row=1, column=0, sticky="e", pady=7)
-        ttk.Entry(controls, textvariable=self.normal_var, width=9).grid(
-            row=1, column=1, sticky="w", padx=8
+        normal_label = self._localize(
+            ttk.Label(controls, style="Panel.TLabel"), "normal_rounds"
         )
-        ttk.Checkbutton(controls, text="抽到耗尽", variable=self.normal_empty_var).grid(
-            row=1, column=2, sticky="w"
+        normal_label.grid(row=1, column=0, sticky="e", pady=9)
+        ttk.Entry(controls, textvariable=self.normal_var, width=10).grid(
+            row=1, column=1, sticky="w", padx=9
         )
-        ttk.Label(controls, text="超级抽奖").grid(
-            row=1, column=3, sticky="e", padx=(24, 0)
+        self.normal_empty_check = self._localize(
+            ttk.Checkbutton(controls, variable=self.normal_empty_var), "until_empty"
         )
-        ttk.Entry(controls, textvariable=self.super_var, width=9).grid(
-            row=1, column=4, sticky="w", padx=8
-        )
-        ttk.Checkbutton(controls, text="抽到耗尽", variable=self.super_empty_var).grid(
-            row=1, column=5, sticky="w"
-        )
+        self.normal_empty_check.grid(row=1, column=2, sticky="w")
 
-        ttk.Label(controls, text="重复车策略").grid(row=2, column=0, sticky="e", pady=7)
-        policy_box = ttk.Combobox(
+        super_label = self._localize(
+            ttk.Label(controls, style="Panel.TLabel"), "super_rounds"
+        )
+        super_label.grid(row=1, column=3, sticky="e", padx=(20, 0))
+        ttk.Entry(controls, textvariable=self.super_var, width=10).grid(
+            row=1, column=4, sticky="w", padx=9
+        )
+        self.super_empty_check = self._localize(
+            ttk.Checkbutton(controls, variable=self.super_empty_var), "until_empty"
+        )
+        self.super_empty_check.grid(row=1, column=5, sticky="w")
+
+        policy_label = self._localize(
+            ttk.Label(controls, style="Panel.TLabel"), "duplicate_policy"
+        )
+        policy_label.grid(row=2, column=0, sticky="e", pady=9)
+        self.policy_box = ttk.Combobox(
             controls,
             textvariable=self.policy_var,
-            values=list(POLICY_LABELS.values()),
             state="readonly",
-            width=27,
+            width=39,
         )
-        policy_box.grid(row=2, column=1, columnspan=2, sticky="w", padx=8)
-        policy_box.bind("<<ComboboxSelected>>", lambda _event: self._update_mode_ui())
-        ttk.Label(controls, text="价格阈值").grid(
-            row=2, column=3, sticky="e", padx=(24, 0)
+        self.policy_box.grid(row=2, column=1, columnspan=2, sticky="ew", padx=9)
+        self.policy_box.bind(
+            "<<ComboboxSelected>>", lambda _event: self._update_mode_ui()
         )
+        price_label = self._localize(
+            ttk.Label(controls, style="Panel.TLabel"), "price_threshold"
+        )
+        price_label.grid(row=2, column=3, sticky="e", padx=(20, 0))
         self.price_entry = ttk.Entry(controls, textvariable=self.price_var, width=14)
-        self.price_entry.grid(row=2, column=4, sticky="w", padx=8)
-        ttk.Label(controls, text="CR").grid(row=2, column=5, sticky="w")
-
-        ttk.Label(controls, text="阶段超时").grid(row=3, column=0, sticky="e", pady=7)
-        ttk.Entry(controls, textvariable=self.timeout_var, width=9).grid(
-            row=3, column=1, sticky="w", padx=8
+        self.price_entry.grid(row=2, column=4, sticky="w", padx=9)
+        ttk.Label(controls, text="CR", style="Panel.TLabel").grid(
+            row=2, column=5, sticky="w"
         )
-        ttk.Label(controls, text="秒").grid(row=3, column=2, sticky="w")
 
-        self.bridge_frame = ttk.Frame(controls)
+        timeout_label = self._localize(
+            ttk.Label(controls, style="Panel.TLabel"), "phase_timeout"
+        )
+        timeout_label.grid(row=3, column=0, sticky="e", pady=9)
+        ttk.Entry(controls, textvariable=self.timeout_var, width=9).grid(
+            row=3, column=1, sticky="w", padx=9
+        )
+        seconds_label = self._localize(
+            ttk.Label(controls, style="Panel.TLabel"), "seconds"
+        )
+        seconds_label.grid(row=3, column=2, sticky="w")
+
+        self.bridge_frame = ttk.Frame(controls, style="Panel.TFrame")
         self.bridge_frame.grid(row=4, column=0, columnspan=6, sticky="ew", pady=(6, 0))
         self.fh6auto_dir_var = tk.StringVar(value=self.settings["fh6auto_dir"])
-        ttk.Label(self.bridge_frame, text="FH6Auto 目录").pack(side=tk.LEFT)
+        bridge_dir_label = self._localize(
+            ttk.Label(self.bridge_frame, style="Panel.TLabel"), "fh6auto_dir"
+        )
+        bridge_dir_label.pack(side=tk.LEFT)
         ttk.Entry(self.bridge_frame, textvariable=self.fh6auto_dir_var).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=8
         )
-        ttk.Button(
-            self.bridge_frame, text="选择", command=self._choose_fh6auto_dir
-        ).pack(side=tk.LEFT)
-        ttk.Label(
-            self.bridge_frame,
-            text="联动会启动官方 FH6Auto.exe，你仍需在官方界面点击开始",
-            foreground="#B45309",
-        ).pack(side=tk.LEFT, padx=12)
-
-        buttons = ttk.Frame(self.root, padding=(12, 0, 12, 8))
-        buttons.pack(fill=tk.X)
-        self.start_btn = ttk.Button(buttons, text="开始 (F8)", command=self._start)
-        self.start_btn.pack(side=tk.LEFT)
-        self.stop_btn = ttk.Button(
-            buttons, text="紧急停止", command=self._stop, state=tk.DISABLED
+        self.browse_btn = self._localize(
+            tk.Button(
+                self.bridge_frame,
+                command=self._choose_fh6auto_dir,
+                bg="#334155",
+                fg=colors["text"],
+                activebackground="#475569",
+                activeforeground=colors["text"],
+                relief=tk.FLAT,
+                padx=12,
+                pady=5,
+                cursor="hand2",
+            ),
+            "browse",
         )
-        self.stop_btn.pack(side=tk.LEFT, padx=8)
-        ttk.Label(
-            buttons,
-            text="联动运行时 F8 同时停止 FH6Auto 与抽奖器；F9 由桥接握手专用",
-            foreground="#9B2226",
-        ).pack(side=tk.LEFT, padx=12)
+        self.browse_btn.pack(side=tk.LEFT)
+        self.bridge_hint = self._localize(
+            ttk.Label(self.bridge_frame, style="Hint.TLabel"), "bridge_hint"
+        )
+        self.bridge_hint.pack(side=tk.LEFT, padx=12)
 
-        stats_frame = ttk.LabelFrame(self.root, text="本次累计", padding=8)
-        stats_frame.pack(fill=tk.X, padx=12, pady=(0, 8))
+        buttons = tk.Frame(self.root, bg=colors["bg"], padx=18, pady=2)
+        buttons.pack(fill=tk.X)
+        self.start_btn = self._localize(
+            tk.Button(
+                buttons,
+                command=self._start,
+                bg=colors["green"],
+                fg="#FFFFFF",
+                activebackground="#238636",
+                activeforeground="#FFFFFF",
+                disabledforeground="#6E7681",
+                relief=tk.FLAT,
+                padx=22,
+                pady=9,
+                font=("Microsoft YaHei UI", 11, "bold"),
+                cursor="hand2",
+            ),
+            "start",
+        )
+        self.start_btn.pack(side=tk.LEFT)
+        self.stop_btn = self._localize(
+            tk.Button(
+                buttons,
+                command=self._stop,
+                state=tk.DISABLED,
+                bg=colors["red"],
+                fg="#FFFFFF",
+                activebackground="#B02A37",
+                activeforeground="#FFFFFF",
+                disabledforeground="#6E7681",
+                relief=tk.FLAT,
+                padx=22,
+                pady=9,
+                font=("Microsoft YaHei UI", 11, "bold"),
+                cursor="hand2",
+            ),
+            "emergency_stop",
+        )
+        self.stop_btn.pack(side=tk.LEFT, padx=9)
+        self.hotkey_hint = self._localize(
+            tk.Label(
+                buttons,
+                bg=colors["bg"],
+                fg=colors["muted"],
+                font=("Microsoft YaHei UI", 10),
+            ),
+            "hotkey_hint",
+        )
+        self.hotkey_hint.pack(side=tk.LEFT, padx=12)
+
+        stats_shell = tk.Frame(self.root, bg=colors["bg"], padx=18, pady=8)
+        stats_shell.pack(fill=tk.X)
+        self.stats_title = self._localize(
+            tk.Label(
+                stats_shell,
+                bg=colors["bg"],
+                fg=colors["gold"],
+                font=("Microsoft YaHei UI", 12, "bold"),
+            ),
+            "stats_title",
+        )
+        self.stats_title.pack(anchor="w", pady=(0, 4))
+        cards = tk.Frame(stats_shell, bg=colors["bg"])
+        cards.pack(fill=tk.X)
+        for column in range(4):
+            cards.columnconfigure(column, weight=1, uniform="stats")
         self.stats_labels = {}
         stats = [
-            ("normal_spins", "普通"),
-            ("super_spins", "超级"),
-            ("total", "重复车"),
-            ("kept", "保留"),
-            ("sold", "出售"),
-            ("earned", "收入 CR"),
-            ("ocr_failed", "OCR失败"),
-            ("bridge_cycles", "联动轮次"),
+            ("normal_spins", "stat_normal", "#3498DB"),
+            ("super_spins", "stat_super", "#8E44AD"),
+            ("total", "stat_duplicates", "#E67E22"),
+            ("kept", "stat_kept", "#2EA043"),
+            ("sold", "stat_sold", "#DA3633"),
+            ("earned", "stat_sale_income", "#F1C40F"),
+            ("ocr_failed", "stat_ocr_failed", "#8B949E"),
+            ("bridge_cycles", "stat_bridge_cycles", "#17A2B8"),
         ]
         last_stats = self.settings.get("last_stats") or {}
-        for index, (key, label) in enumerate(stats):
-            box = ttk.Frame(stats_frame)
-            box.grid(row=0, column=index, padx=10, sticky="nsew")
-            stats_frame.columnconfigure(index, weight=1)
-            ttk.Label(box, text=label).pack()
-            value = last_stats.get(key, 0)
-            self.stats_labels[key] = ttk.Label(
-                box, text=str(value), style="Value.TLabel"
+        for index, (key, text_key, accent) in enumerate(stats):
+            box = tk.Frame(
+                cards,
+                bg=colors["card"],
+                highlightbackground=colors["border"],
+                highlightthickness=1,
+                padx=13,
+                pady=9,
             )
-            self.stats_labels[key].pack()
+            box.grid(
+                row=index // 4,
+                column=index % 4,
+                padx=4,
+                pady=4,
+                sticky="nsew",
+            )
+            title = self._localize(
+                tk.Label(
+                    box,
+                    bg=colors["card"],
+                    fg=colors["muted"],
+                    font=("Microsoft YaHei UI", 9),
+                ),
+                text_key,
+            )
+            title.pack(anchor="w")
+            value = last_stats.get(key, 0)
+            self.stats_labels[key] = tk.Label(
+                box,
+                text=f"{value:,}" if isinstance(value, int) else str(value),
+                bg=colors["card"],
+                fg=accent,
+                font=("Segoe UI", 17, "bold"),
+            )
+            self.stats_labels[key].pack(anchor="w")
+        self.income_note = self._localize(
+            tk.Label(
+                stats_shell,
+                bg=colors["bg"],
+                fg="#D29922",
+                font=("Microsoft YaHei UI", 9),
+                anchor="w",
+            ),
+            "income_note",
+        )
+        self.income_note.pack(fill=tk.X, padx=5, pady=(3, 0))
 
-        log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=6)
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        log_frame = tk.Frame(
+            self.root,
+            bg=colors["panel"],
+            highlightbackground=colors["border"],
+            highlightthickness=1,
+        )
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=18, pady=(0, 16))
+        self.log_title = self._localize(
+            tk.Label(
+                log_frame,
+                bg=colors["panel"],
+                fg="#5DADE2",
+                font=("Microsoft YaHei UI", 11, "bold"),
+                padx=12,
+                pady=7,
+            ),
+            "log_title",
+        )
+        self.log_title.pack(anchor="w")
+        log_body = tk.Frame(log_frame, bg=colors["panel"])
+        log_body.pack(fill=tk.BOTH, expand=True, padx=7, pady=(0, 7))
         self.log_text = tk.Text(
-            log_frame, state=tk.DISABLED, font=("Consolas", 12), wrap=tk.WORD
+            log_body,
+            state=tk.DISABLED,
+            font=("Cascadia Mono", 11),
+            wrap=tk.WORD,
+            bg=colors["input"],
+            fg="#C9D1D9",
+            insertbackground=colors["text"],
+            selectbackground=colors["blue"],
+            relief=tk.FLAT,
+            padx=10,
+            pady=8,
         )
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        scrollbar = ttk.Scrollbar(log_body, command=self.log_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.log_text.configure(yscrollcommand=scrollbar.set)
+        self._refresh_language()
         self._update_mode_ui()
 
+    def _selected_policy(self):
+        labels = POLICY_LABELS[self.language]
+        return next(
+            (key for key, label in labels.items() if label == self.policy_var.get()),
+            self.policy_key,
+        )
+
+    def _on_language_changed(self, _event=None):
+        self.policy_key = self._selected_policy()
+        selected = self.language_display_var.get()
+        self.language = next(
+            (code for code, label in LANGUAGE_NAMES.items() if label == selected),
+            "zh",
+        )
+        self.settings["language"] = self.language
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self._refresh_language()
+        self._update_mode_ui()
+
+    def _refresh_language(self):
+        self.root.title(self._t("window_title"))
+        for widget, key in self._localized_widgets:
+            widget.configure(text=self._t(key))
+        self.status_var.set(self._t(self.status_key))
+        self.language_display_var.set(LANGUAGE_NAMES[self.language])
+        self.policy_box.configure(values=list(POLICY_LABELS[self.language].values()))
+        self.policy_var.set(POLICY_LABELS[self.language][self.policy_key])
+
+    def _set_status(self, key, color):
+        self.status_key = key
+        self.status_var.set(self._t(key))
+        self.status_label.configure(bg=color, fg="#FFFFFF")
+
     def _update_mode_ui(self):
+        self.policy_key = self._selected_policy()
         if self.mode_var.get() == "bridge":
             self.bridge_frame.grid()
         else:
             self.bridge_frame.grid_remove()
         self.price_entry.configure(
-            state="normal"
-            if LABEL_POLICIES.get(self.policy_var.get()) == "threshold"
-            else "disabled"
+            state="normal" if self.policy_key == "threshold" else "disabled"
         )
 
     def _choose_fh6auto_dir(self):
@@ -328,15 +664,16 @@ class GachaApp:
         if self.super_empty_var.get():
             super_rounds = 999
         if normal <= 0 and super_rounds <= 0:
-            raise ValueError("请至少配置一种抽奖次数，或勾选抽到耗尽")
-        policy = LABEL_POLICIES[self.policy_var.get()]
+            raise ValueError(self._t("at_least_one"))
+        self.policy_key = self._selected_policy()
         settings = {
+            "language": self.language,
             "mode": self.mode_var.get(),
             "normal_rounds": self._parse_int(self.normal_var.get(), 0),
             "super_rounds": self._parse_int(self.super_var.get(), 0),
             "normal_until_empty": bool(self.normal_empty_var.get()),
             "super_until_empty": bool(self.super_empty_var.get()),
-            "duplicate_policy": policy,
+            "duplicate_policy": self.policy_key,
             "price_threshold": self._parse_int(self.price_var.get(), 100_000),
             "phase_timeout": self._parse_int(self.timeout_var.get(), 1800, 60),
             "fh6auto_dir": self.fh6auto_dir_var.get().strip(),
@@ -353,15 +690,16 @@ class GachaApp:
             if self.settings["mode"] == "bridge":
                 self._validate_bridge_install()
         except Exception as exc:
-            messagebox.showerror("无法开始", str(exc), parent=self.root)
+            messagebox.showerror(self._t("error_title"), str(exc), parent=self.root)
             return
 
         self.running = True
         self.start_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
-        self.status_var.set(
-            "联动监听中" if self.settings["mode"] == "bridge" else "独立抽奖运行中"
-        )
+        if self.settings["mode"] == "bridge":
+            self._set_status("status_bridge", self.colors["blue"])
+        else:
+            self._set_status("status_standalone", self.colors["green"])
         self.bridge = None
         self.config_guard = None
         self._reset_stats()
@@ -387,24 +725,20 @@ class GachaApp:
         exe = directory / "FH6Auto.exe"
         config_path = directory / "config.json"
         if not exe.is_file() or not config_path.is_file():
-            raise FileNotFoundError("所选目录必须同时包含 FH6Auto.exe 和 config.json")
+            raise FileNotFoundError(self._t("invalid_bridge_dir"))
         if process_running("FH6Auto.exe"):
-            raise RuntimeError(
-                "请先关闭正在运行的 FH6Auto；桥接器需要在启动前临时启用诊断日志"
-            )
+            raise RuntimeError(self._t("close_running_auto"))
         config = json.loads(config_path.read_text(encoding="utf-8"))
         route_errors = validate_fh6auto_pipeline(config)
         if route_errors:
-            raise ValueError(
-                "FH6Auto 联动要求 1→2→3→4→1 完整回环：\n" + "\n".join(route_errors)
-            )
+            raise ValueError(self._t("route_error", errors="\n".join(route_errors)))
 
     def _run_standalone(self, normal, super_rounds):
         try:
             ok = self.core.run_sequence(normal, super_rounds)
-            self._log("独立抽奖完成" if ok else "独立抽奖未安全完成")
+            self._log(self._t("standalone_done" if ok else "standalone_incomplete"))
         except Exception as exc:
-            self._log(f"独立抽奖异常: {exc}")
+            self._log(self._t("standalone_error", error=exc))
         finally:
             self.root.after(0, self._on_done)
 
@@ -423,25 +757,22 @@ class GachaApp:
             )
             os.startfile(str(Path(directory) / "FH6Auto.exe"))
             ok = self.bridge.run()
-            self._log("联动任务完成" if ok else "联动任务已停止或需要人工检查")
+            self._log(self._t("bridge_done" if ok else "bridge_incomplete"))
         except Exception as exc:
-            self._log(f"联动启动/运行失败: {exc}")
+            self._log(self._t("bridge_error", error=exc))
         finally:
             try:
                 if self.config_guard:
                     if process_running("FH6Auto.exe") and not self.closing.is_set():
-                        self._log("请关闭 FH6Auto；关闭后桥接器会恢复其关机/调试配置")
+                        self._log(self._t("close_auto_restore"))
                     while process_running("FH6Auto.exe") and not self.closing.wait(1.0):
                         pass
                     still_running = process_running("FH6Auto.exe")
                     self.config_guard.restore(keep_backup=still_running)
                     if still_running:
-                        self._log(
-                            "FH6Auto 仍在运行，已保留配置恢复备份；"
-                            "下次联动会继续使用原始值"
-                        )
+                        self._log(self._t("backup_retained"))
             except Exception as exc:
-                self._log(f"恢复 FH6Auto 配置失败，已保留备份供下次恢复: {exc}")
+                self._log(self._t("restore_failed", error=exc))
             finally:
                 try:
                     self.root.after(0, self._on_done)
@@ -453,8 +784,8 @@ class GachaApp:
             self.core.stop()
         if self.bridge:
             self.bridge.stop()
-        self.status_var.set("正在停止...")
-        self._log("收到紧急停止请求")
+        self._set_status("status_stopping", self.colors["red"])
+        self._log(self._t("stop_requested"))
 
     def _on_done(self):
         if self.core:
@@ -462,7 +793,7 @@ class GachaApp:
         self.running = False
         self.start_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
-        self.status_var.set("就绪")
+        self._set_status("status_ready", "#222B36")
 
     def _reset_stats(self):
         zeros = {key: 0 for key in self.stats_labels}
